@@ -11,6 +11,7 @@ using Pchp.Library.Resources;
 
 namespace Pchp.Library
 {
+    [PhpExtension("standard")]
     public static class Strings
     {
         #region Character map
@@ -37,45 +38,54 @@ namespace Pchp.Library
 
         #region ord, chr, bin2hex, hex2bin
 
-        /// <summary>
-        /// Returns ASCII code of the first character of a string of bytes or <c>0</c> if string is empty.
-        /// </summary>
-        public static int ord(string str) => string.IsNullOrEmpty(str) ? 0 : (int)str[0];
+        ///// <summary>
+        ///// Returns ASCII code of the first character of a string of bytes or <c>0</c> if string is empty.
+        ///// </summary>
+        //public static int ord(string @string) => string.IsNullOrEmpty(@string) ? 0 : (int)@string[0];
 
         /// <summary>
         /// Returns ASCII code of the first character of a string of bytes or <c>0</c> if string is empty.
         /// </summary>
-        public static int ord(PhpString str) => str.Ord();
+        public static int ord(PhpString @string) => PhpStringExtension.Ord(@string);
 
         /// <summary>
         /// Converts ordinal number of character to a binary string containing that character.
         /// </summary>
-        /// <param name="charCode">The ASCII code.</param>
-        /// <returns>The character with <paramref name="charCode"/> ASCIT code.</returns>
-        public static PhpString chr(int charCode) => new PhpString(new byte[] { (byte)charCode });
+        /// <param name="bytevalue ">The ASCII code.</param>
+        /// <returns>The character with <paramref name="bytevalue "/> ASCII code.</returns>
+        public static PhpString chr(int bytevalue)
+        {
+            if (bytevalue < 0xf0)
+            {
+                return ((char)bytevalue).ToString();
+            }
+            else
+            {
+                return new PhpString(new byte[] { (byte)bytevalue });
+            }
+        }
 
         /// <summary>
         /// Converts ordinal number of Unicode character to a string containing that character.
         /// </summary>
-        /// <param name="charCode">The ordinal number of character.</param>
-        /// <returns>The character with <paramref name="charCode"/> ordnial number.</returns>
+        /// <param name="bytevalue">The ordinal number of character.</param>
+        /// <returns>The character with <paramref name="bytevalue"/> ordinal number.</returns>
         /*public*/
-        static string chr_unicode(int charCode)
+        static string chr_unicode(int bytevalue)
         {
-            return unchecked((char)charCode).ToString();
+            return unchecked((char)bytevalue).ToString();
         }
 
         /// <summary>
         /// Converts a string into hexadecimal representation.
         /// </summary>
-        /// <param name="ctx">Runtime context.</param>
         /// <param name="str">The string to be converted.</param>
         /// <returns>
         /// The concatenated two-characters long hexadecimal numbers each representing one character of <paramref name="str"/>.
         /// </returns>
-        public static string bin2hex(Context ctx, PhpString str)
+        public static string bin2hex(byte[] str)
         {
-            if (str.IsEmpty)
+            if (str == null || str.Length == 0)
             {
                 return string.Empty;
             }
@@ -98,25 +108,25 @@ namespace Pchp.Library
 
             //return result.ToString();
 
-            return StringUtils.BinToHex(str.ToBytes(ctx), null);
+            return StringUtils.BinToHex(str, null);
         }
 
         /// <summary>
         /// Decodes a hexadecimally encoded binary string.
         /// </summary>
-        public static PhpString hex2bin(string str)
+        public static PhpString hex2bin(string data)
         {
-            if ((str.Length % 2) != 0)
+            if ((data.Length % 2) != 0)
             {
                 throw new ArgumentException();
             }
 
-            var result = new byte[str.Length / 2];
+            var result = new byte[data.Length / 2];
 
-            for (int i = 0, b = 0; i < str.Length; i += 2)
+            for (int i = 0, b = 0; i < data.Length; i += 2)
             {
-                var x = StringUtils.HexToNumber(str[i]);
-                var y = StringUtils.HexToNumber(str[i + 1]);
+                var x = StringUtils.HexToNumber(data[i]);
+                var y = StringUtils.HexToNumber(data[i + 1]);
 
                 if ((x | y) < 0)
                 {
@@ -599,16 +609,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The string to be reversed.</param>
         /// <returns>The reversed string or empty string if <paramref name="str"/> is null.</returns>
-        public static string strrev(string str)
-        {
-            if (string.IsNullOrEmpty(str))
-                return string.Empty;
-
-            //
-            var chars = str.ToCharArray();
-            Array.Reverse(chars);
-            return new string(chars);
-        }
+        public static PhpString strrev(PhpString str) => str.Reverse();
 
         /// <summary>
         /// Finds a length of a segment consisting entirely of specified characters.
@@ -777,7 +778,7 @@ namespace Pchp.Library
                 throw new ArgumentException();
             }
 
-            return ImplodeInternal(ctx, PhpValue.Void, pieces);
+            return ImplodeInternal(ctx, PhpValue.Null, pieces);
         }
 
         /// <summary>
@@ -1016,7 +1017,7 @@ namespace Pchp.Library
         }
 
         /// <summary>
-        /// GetUserEntryPoint encode a string by shifting every letter (a-z, A-Z) by 13 places in the alphabet.
+        /// Encodes a string by shifting every letter (a-z, A-Z) by 13 places in the alphabet.
         /// </summary>
         /// <param name="str">The string to be encoded.</param>
         /// <returns>The string with characters rotated by 13 places.</returns>
@@ -1095,13 +1096,16 @@ namespace Pchp.Library
             //    return new PhpBytes(result);
             //}
 
-            string unistr = str; // Core.Convert.ObjectToString(str);
+            var unistr = str; // Core.Convert.ObjectToString(str);
             if (unistr != null)
             {
-                StringBuilder result = new StringBuilder(count * unistr.Length);
-                while (count-- > 0) result.Append(unistr);
+                var result = StringBuilderUtilities.Pool.Get(); // new StringBuilder(count * unistr.Length);
+                while (count-- > 0)
+                {
+                    result.Append(unistr);
+                }
 
-                return result.ToString();
+                return StringBuilderUtilities.GetStringAndReturn(result);
             }
 
             return null;
@@ -1491,7 +1495,7 @@ namespace Pchp.Library
             {
                 if (result == null)
                 {
-                    result = new StringBuilder(subject.Length);
+                    result = StringBuilderUtilities.Pool.Get();
                 }
 
                 result.Append(subject, from, index - from);
@@ -1507,7 +1511,7 @@ namespace Pchp.Library
             else
             {
                 result.Append(subject, from, subject.Length - from);
-                return result.ToString();
+                return StringBuilderUtilities.GetStringAndReturn(result);
             }
         }
 
@@ -1722,7 +1726,7 @@ namespace Pchp.Library
 
             Encoding encoding = ctx.StringEncoding;
             MemoryStream stream = new MemoryStream();
-            StringBuilder result = new StringBuilder(str.Length / 2);
+            var result = StringBuilderUtilities.Pool.Get(); // new StringBuilder(str.Length / 2);
 
             int i = 0;
             while (i < str.Length)
@@ -1791,7 +1795,8 @@ namespace Pchp.Library
                 stream.Seek(0, SeekOrigin.Begin);
             }
 
-            return result.ToString();
+            //
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -2007,7 +2012,7 @@ namespace Pchp.Library
         /// <returns>The unquoted string.</returns>
         public static string stripslashes(string str)
         {
-            return StringUtils.StripCSlashes(str);
+            return (str != null) ? StringUtils.StripCSlashes(str) : string.Empty;
         }
 
         /// <summary>
@@ -2027,9 +2032,9 @@ namespace Pchp.Library
             Encoding encoding = ctx.StringEncoding;
             const char escape = '\\';
             int length = str.Length;
-            StringBuilder result = new StringBuilder(length);
+            var result = StringBuilderUtilities.Pool.Get(); // new StringBuilder(length);
             bool state1 = false;
-            byte[] bA1 = new byte[1];
+            byte[] bA1 = new byte[1]; // NETSTANDARD2.1 // stackalloc
 
             for (int i = 0; i < length; i++)
             {
@@ -2099,7 +2104,8 @@ namespace Pchp.Library
                 else result.Append(c);
             }
 
-            return result.ToString();
+            //
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         #endregion
@@ -2226,7 +2232,7 @@ namespace Pchp.Library
         /// <summary>
         /// List of known HTML entities without leading <c>&amp;</c> character when checking double encoded entities.
         /// </summary>
-        static readonly string[] known_entities = { "amp;", "lt;", "gt;", "quot;", "apos;", "hellip;", "nbsp;", "raquo;" };
+        static readonly string[] known_entities = { "amp;", "lt;", "gt;", "quot;", "apos;", "hellip;", "nbsp;", "raquo;", "lsaquo;" };
 
         /// <summary>
         /// Converts special characters of substring to HTML entities.
@@ -2238,12 +2244,12 @@ namespace Pchp.Library
         /// <param name="charSet">The character set used in conversion. This parameter is ignored.</param>
         /// <param name="keepExisting">Whether to keep existing entities and do not encode them.</param>
         /// <returns>The converted substring.</returns>
-        static string HtmlSpecialCharsEncode(string str, int index, int length, QuoteStyle quoteStyle, string charSet, bool keepExisting)
+        internal static string HtmlSpecialCharsEncode(string str, int index, int length, QuoteStyle quoteStyle, string charSet, bool keepExisting)
         {
             int maxi = index + length;
             Debug.Assert(maxi <= str.Length);
 
-            StringBuilder result = new StringBuilder(length);
+            var result = StringBuilderUtilities.Pool.Get(); // new StringBuilder(length);
 
             // quote style is anded to emulate PHP behavior (any value is allowed):
             string single_quote = (quoteStyle & QuoteStyle.SingleQuotes) != 0 ? "&#039;" : "'";
@@ -2277,7 +2283,8 @@ namespace Pchp.Library
                 }
             }
 
-            return result.ToString();
+            //
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         static string IsAtKnownEntity(string str, int index)
@@ -2331,7 +2338,7 @@ namespace Pchp.Library
         {
             if (str == null) return null;
 
-            StringBuilder result = new StringBuilder(str.Length);
+            var result = StringBuilderUtilities.Pool.Get();
 
             bool dq = (quoteStyle & QuoteStyle.DoubleQuotes) != 0;
             bool sq = (quoteStyle & QuoteStyle.SingleQuotes) != 0;
@@ -2369,7 +2376,8 @@ namespace Pchp.Library
                 result.Append(c);
             }
 
-            return result.ToString();
+            //
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -2421,7 +2429,7 @@ namespace Pchp.Library
             string single_quote = (quoteStyle & QuoteStyle.SingleQuotes) != 0 ? "&#039;" : "'";
             string double_quote = (quoteStyle & QuoteStyle.DoubleQuotes) != 0 ? "&quot;" : "\"";
 
-            StringBuilder str_builder = new StringBuilder(str.Length);
+            var str_builder = StringBuilderUtilities.Pool.Get();
             StringWriter result = new StringWriter(str_builder);
 
             // convert ' and " manually, rely on HttpUtility.HtmlEncode for everything else
@@ -2439,7 +2447,7 @@ namespace Pchp.Library
             if (old_index < str.Length) result.Write(System.Net.WebUtility.HtmlEncode(str.Substring(old_index)));
 
             result.Flush();
-            return str_builder.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(str_builder);
         }
 
         /// <summary>
@@ -2513,7 +2521,7 @@ namespace Pchp.Library
                 return System.Net.WebUtility.HtmlDecode(str);
             }
 
-            StringBuilder str_builder = new StringBuilder(str.Length);
+            StringBuilder str_builder = StringBuilderUtilities.Pool.Get();
             StringWriter result = new StringWriter(str_builder);
 
             // convert &#039;, &#39; and &quot; manually, rely on HttpUtility.HtmlDecode for everything else
@@ -2561,7 +2569,7 @@ namespace Pchp.Library
             if (old_index < str.Length) result.Write(System.Net.WebUtility.HtmlDecode(str.Substring(old_index)));
 
             result.Flush();
-            return str_builder.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(str_builder);
         }
 
         #endregion
@@ -2670,7 +2678,7 @@ namespace Pchp.Library
                 return false;
             }
         }
-        
+
         #endregion
 
         /// <summary>
@@ -3691,12 +3699,13 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The input string.</param>
         /// <returns><paramref name="str"/> with the first character converted to uppercase.</returns>
+        [return: NotNull]
         public static string ucfirst(string str)
         {
             if (string.IsNullOrEmpty(str))
                 return string.Empty;
 
-            return Char.ToUpper(str[0]) + str.Substring(1);
+            return char.ToUpper(str[0]) + str.Substring(1);
         }
 
         /// <summary>
@@ -3705,6 +3714,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The input string.</param>
         /// <returns>Returns the resulting string.</returns>
+        [return: NotNull]
         public static string lcfirst(string str)
         {
             if (string.IsNullOrEmpty(str))
@@ -3718,12 +3728,23 @@ namespace Pchp.Library
         /// Makes the first character of each word in a string uppercase.
         /// </summary>
         /// <param name="str">The input string.</param>
-        /// <returns><paramref name="str"/> with the first character of each word in a string converted to 
-        /// uppercase.</returns>
-        public static string ucwords(string str)
+        /// <returns><paramref name="str"/> with the first character of each word in a string converted to uppercase.</returns>
+        [return: NotNull]
+        public static string ucwords(string str) => ucwords(str, " \t\r\n\f\v");
+
+        /// <summary>
+        /// Makes the first character of each word in a string uppercase.
+        /// </summary>
+        /// <param name="str">The input string.</param>
+        /// <param name="delimiters">The word separator characters.</param>
+        /// <returns><paramref name="str"/> with the first character of each word in a string converted to uppercase.</returns>
+        [return: NotNull]
+        public static string ucwords(string str, string delimiters)
         {
             if (string.IsNullOrEmpty(str))
+            {
                 return string.Empty;
+            }
 
             int length = str.Length;
             var result = new StringBuilder(str);
@@ -3731,14 +3752,14 @@ namespace Pchp.Library
             bool state = true;
             for (int i = 0; i < length; i++)
             {
-                if (char.IsWhiteSpace(result[i])) state = true;
-                else
+                if (delimiters.IndexOf(result[i]) >= 0)
                 {
-                    if (state)
-                    {
-                        result[i] = char.ToUpper(result[i]);
-                        state = false;
-                    }
+                    state = true;
+                }
+                else if (state)
+                {
+                    result[i] = char.ToUpper(result[i]);
+                    state = false;
                 }
             }
 
@@ -3769,7 +3790,7 @@ namespace Pchp.Library
             Debug.Assert(format != null && arguments != null);
 
             Encoding encoding = ctx.StringEncoding;
-            StringBuilder result = new StringBuilder();
+            var result = StringBuilderUtilities.Pool.Get();
             int state = 0, width = 0, precision = -1, seqIndex = 0, swapIndex = -1;
             bool leftAlign = false;
             bool plusSign = false;
@@ -4002,7 +4023,7 @@ namespace Pchp.Library
                 }
             }
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -4014,25 +4035,27 @@ namespace Pchp.Library
         /// See <A href="http://www.php.net/manual/en/function.sprintf.php">PHP manual</A> for details.
         /// Besides, a type specifier "%C" is applicable. It converts an integer value to Unicode character.</param>
         /// <returns>The formatted string.</returns>
-        /// <exception cref="ArgumentNullException">Thrown when the <paramref name="arguments"/> parameter is null.</exception>
         /// <exception cref="PhpException">Thrown when there is less arguments than expeceted by formatting string.</exception>
         [return: CastToFalse]
         public static string sprintf(Context ctx, string format, params PhpValue[] arguments)
         {
-            if (format == null) return string.Empty;
+            if (string.IsNullOrEmpty(format))
+            {
+                return string.Empty;
+            }
 
             // null arguments would be compiler's error (or error of the user):
-            if (arguments == null) throw new ArgumentNullException("arguments");
 
-            var result = FormatInternal(ctx, format, arguments);
-            if (result == null)
+            var result = FormatInternal(ctx, format, arguments ?? Array.Empty<PhpValue>());
+            if (result != null)
             {
-                //PhpException.Throw(PhpError.Warning, LibResources.GetString("too_few_arguments"));
-
-                // TODO: return FALSE
-                throw new ArgumentException();
+                return result;
             }
-            return result;
+            else
+            {
+                PhpException.Throw(PhpError.Warning, LibResources.too_few_arguments);
+                return null;    // FALSE
+            }
         }
 
         /// <summary>
@@ -4041,8 +4064,7 @@ namespace Pchp.Library
         /// <param name="ctx">Current runtime context.</param>
         /// <param name="format">The format string. For details, see PHP manual.</param>
         /// <param name="arguments">The arguments.</param>
-        /// <returns>The formatted string.</returns>
-        /// <exception cref="PhpException">Thrown when there is less arguments than expeceted by formatting string.</exception>
+        /// <returns>The formatted string on success, or <c>false</c> if there is less arguments than expeceted by formatting string.</returns>
         [return: CastToFalse]
         public static string vsprintf(Context ctx, string format, PhpArray arguments)
         {
@@ -4062,10 +4084,9 @@ namespace Pchp.Library
             var result = FormatInternal(ctx, format, array);
             if (result == null)
             {
-                //PhpException.Throw(PhpError.Warning, LibResources.GetString("too_few_arguments"));
+                PhpException.Throw(PhpError.Warning, LibResources.too_few_arguments);
 
-                // TODO: return FALSE
-                throw new ArgumentException();
+                return null;
             }
             return result;
         }
@@ -4550,29 +4571,6 @@ namespace Pchp.Library
         #region number_format, money_format
 
         /// <summary>
-        /// Formats a number with grouped thousands.
-        /// </summary>
-        /// <param name="number">The number to format.</param>
-        /// <returns>String representation of the number without decimals (rounded) with comma between every group
-        /// of thousands.</returns>
-        public static string number_format(double number)
-        {
-            return number_format(number, 0, ".", ",");
-        }
-
-        /// <summary>
-        /// Formats a number with grouped thousands and with given number of decimals.
-        /// </summary>
-        /// <param name="number">The number to format.</param>
-        /// <param name="decimals">The number of decimals.</param>
-        /// <returns>String representation of the number with <paramref name="decimals"/> decimals with a dot in front, and with 
-        /// comma between every group of thousands.</returns>
-        public static string number_format(double number, int decimals)
-        {
-            return number_format(number, decimals, ".", ",");
-        }
-
-        /// <summary>
         /// Formats a number with grouped thousands, with given number of decimals, with given decimal point string
         /// and with given thousand separator.
         /// </summary>
@@ -4591,33 +4589,14 @@ namespace Pchp.Library
         /// not make much sense, this method has no such limitation except for <paramref name="thousandsSeparator"/> of which
         /// only the first character is used (documented feature).
         /// </remarks>
-        public static string number_format(double number, int decimals, string decimalPoint, string thousandsSeparator)
+        public static string number_format(double number, int decimals = 0, string decimalPoint = ".", string thousandsSeparator = ",")
         {
-            System.Globalization.NumberFormatInfo format = new System.Globalization.NumberFormatInfo();
-
-            if ((decimals >= 0) && (decimals <= 99))
+            var format = new System.Globalization.NumberFormatInfo
             {
-                format.NumberDecimalDigits = decimals;
-            }
-            else
-            {
-                //PhpException.InvalidArgument("decimals", LibResources.GetString("arg_out_of_bounds", decimals));
-                throw new ArgumentException();
-            }
-
-            if (!string.IsNullOrEmpty(decimalPoint))
-            {
-                format.NumberDecimalSeparator = decimalPoint;
-            }
-
-            if (thousandsSeparator == null) thousandsSeparator = String.Empty;
-
-            switch (thousandsSeparator.Length)
-            {
-                case 0: format.NumberGroupSeparator = String.Empty; break;
-                case 1: format.NumberGroupSeparator = thousandsSeparator; break;
-                default: format.NumberGroupSeparator = thousandsSeparator.Substring(0, 1); break;
-            }
+                NumberDecimalDigits = Math.Max(decimals, 0), // TODO: .NET throws for decimals > 99
+                NumberDecimalSeparator = decimalPoint ?? ".", // NULL ~ a defalt value
+                NumberGroupSeparator = thousandsSeparator ?? ",", // NULL ~ a default value
+            };
 
             return number.ToString("N", format);
         }
@@ -5003,7 +4982,7 @@ namespace Pchp.Library
             //    return new PhpBytes(result);
             //}
 
-            string unistr = str; // Core.Convert.ObjectToString(str);
+            var unistr = str; // Core.Convert.ObjectToString(str);
             if (unistr != null)
             {
                 string uniPaddingString = paddingString; // Core.Convert.ObjectToString(paddingString);
@@ -5048,7 +5027,7 @@ namespace Pchp.Library
                 }
 
                 // else build the resulting string manually
-                StringBuilder result = new StringBuilder(totalWidth);
+                StringBuilder result = StringBuilderUtilities.Pool.Get();
 
                 // pad left
                 while (padLeft > padStrLength)
@@ -5068,7 +5047,7 @@ namespace Pchp.Library
                 }
                 if (padRight > 0) result.Append(uniPaddingString.Substring(0, padRight));
 
-                return result.ToString();
+                return StringBuilderUtilities.GetStringAndReturn(result);
             }
 
             return null;
@@ -5300,7 +5279,7 @@ namespace Pchp.Library
         /// Retrieves the index of the first occurrence of the <paramref name="needle"/> in the <paramref name="haystack"/>
         /// (case insensitive).
         /// </summary>
-        /// <remarks>See <see cref="Strpos(string,object,int)"/> for details.</remarks>
+        /// <remarks>See <see cref="strpos"/> for details.</remarks>
         /// <exception cref="PhpException">Thrown if <paramref name="offset"/> is out of bounds or <paramref name="needle"/> is empty string.</exception>
         [return: CastToFalse]
         public static int stripos(string haystack, PhpValue needle, int offset = 0)
@@ -5333,7 +5312,7 @@ namespace Pchp.Library
         /// Retrieves the index of the last occurrence of the <paramref name="needle"/> in the <paramref name="haystack"/>
         /// (case insensitive).
         /// </summary>
-        /// <remarks>See <see cref="Strrpos(string,object,int)"/> for details.</remarks>
+        /// <remarks>See <see cref="strrpos"/> for details.</remarks>
         /// <exception cref="PhpException">Thrown if <paramref name="offset"/> is out of bounds or <paramref name="needle"/> is empty string.</exception>
         [return: CastToFalse]
         public static int strripos(string haystack, PhpValue needle, int offset = 0)
@@ -5414,6 +5393,49 @@ namespace Pchp.Library
             {
                 return haystack.LastIndexOf(chr_unicode((int)(needle.ToLong() % 256)), end, end - offset + 1, comparisonType);
             }
+        }
+
+        #endregion
+
+        #region str_contains, str_starts_with, str_ends_with
+
+        /// <summary>
+        /// Checks if a string is contained in another string.
+        /// </summary>
+        public static bool str_contains(string haystack, string needle) // CONSIDER: PhpString
+        {
+            if (string.IsNullOrEmpty(needle))
+            {
+                return true;
+            }
+
+            return needle != null && haystack.IndexOf(needle, StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>
+        /// Checks if a string starts with another string.
+        /// </summary>
+        public static bool str_starts_with(string haystack, string needle) // CONSIDER: PhpString
+        {
+            if (string.IsNullOrEmpty(needle))
+            {
+                return true;
+            }
+
+            return needle != null && haystack.StartsWith(needle, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Checks if a string ends with another string.
+        /// </summary>
+        public static bool str_ends_with(string haystack, string needle) // CONSIDER: PhpString
+        {
+            if (string.IsNullOrEmpty(needle))
+            {
+                return true;
+            }
+
+            return needle != null && haystack.EndsWith(needle, StringComparison.Ordinal);
         }
 
         #endregion
@@ -5575,6 +5597,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The string to convert.</param>
         /// <returns>The lowercased string or empty string if <paramref name="str"/> is null.</returns>
+        [return: NotNull]
         public static string strtolower(string str) => str != null ? str.ToLowerInvariant() : string.Empty;
         //{
         //    // TODO: Locale: return (str == null) ? string.Empty : str.ToLower(Locale.GetCulture(Locale.Category.CType));
@@ -5586,6 +5609,7 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="str">The string to convert.</param>
         /// <returns>The uppercased string or empty string if <paramref name="str"/> is null.</returns>
+        [return: NotNull]
         public static string strtoupper(string str) => str != null ? str.ToUpperInvariant() : string.Empty;
         //{
         //    // TODO: Locale: return (str == null) ? string.Empty : str.ToUpper(Locale.GetCulture(Locale.Category.CType));

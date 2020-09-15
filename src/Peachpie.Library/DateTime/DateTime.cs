@@ -23,6 +23,22 @@ namespace Pchp.Library.DateTime
 
         public bool HasErrors => Errors != null && Errors.Count != 0;
 
+        internal static void AddWarning(ref DateTimeErrors errors, string message)
+        {
+            if (errors == null) errors = new DateTimeErrors();
+            if (errors.Warnings == null) errors.Warnings = new List<string>();
+
+            errors.Warnings.Add(message);
+        }
+
+        internal static void AddError(ref DateTimeErrors errors, string message)
+        {
+            if (errors == null) errors = new DateTimeErrors();
+            if (errors.Errors == null) errors.Errors = new List<string>();
+
+            errors.Errors.Add(message);
+        }
+
         public PhpArray ToPhpArray()
         {
             var warnings = new PhpArray(Warnings);
@@ -42,24 +58,9 @@ namespace Pchp.Library.DateTime
     /// Representation of date and time.
     /// </summary>
     [PhpType(PhpTypeAttribute.InheritName), PhpExtension("date")]
+    [DebuggerDisplay(nameof(DateTime), Type = PhpVariable.TypeNameObject)]
     public class DateTime : DateTimeInterface, IPhpComparable, IPhpCloneable
     {
-        #region Constants
-
-        public const string ATOM = DateTimeFunctions.DATE_ATOM;// @"Y-m-d\TH:i:sP";
-        public const string COOKIE = DateTimeFunctions.DATE_COOKIE;// @"l, d-M-y H:i:s T";
-        public const string ISO8601 = DateTimeFunctions.DATE_ISO8601;// @"Y-m-d\TH:i:sO";
-        public const string RFC822 = DateTimeFunctions.DATE_RFC822;// @"D, d M y H:i:s O";
-        public const string RFC850 = DateTimeFunctions.DATE_RFC850;// @"l, d-M-y H:i:s T";
-        public const string RFC1036 = DateTimeFunctions.DATE_RFC1036;// @"D, d M y H:i:s O";
-        public const string RFC1123 = DateTimeFunctions.DATE_RFC1123;// @"D, d M Y H:i:s O";
-        public const string RFC2822 = DateTimeFunctions.DATE_RFC2822;// @"D, d M Y H:i:s O";
-        public const string RFC3339 = DateTimeFunctions.DATE_RFC3339;// @"Y-m-d\TH:i:sP";
-        public const string RSS = DateTimeFunctions.DATE_RSS;// @"D, d M Y H:i:s O";
-        public const string W3C = DateTimeFunctions.DATE_W3C;// @"Y-m-d\TH:i:sP";
-
-        #endregion
-
         #region Fields
 
         readonly protected Context _ctx;
@@ -88,11 +89,16 @@ namespace Pchp.Library.DateTime
         }
 
         /// <summary>
-        /// Gets the timezone type, which is always 3 - specifying that <see cref="timezone"/> will be the timezone identifier.
+        /// Gets the timezone type.
         /// </summary>
+        /// <remarks>
+        /// 1: offset in form of +00:00
+        /// 2: timezone abbreviation
+        /// 3: TimeZone object
+        /// </remarks>
         public int timezone_type
         {
-            get => 3; // 3: A timezone identifier
+            get => DateInfo.GetTimeLibZoneType(TimeZone);
             set { } // ignore, but allow unserialize of this value
         }
 
@@ -101,8 +107,14 @@ namespace Pchp.Library.DateTime
         /// </summary>
         public string timezone
         {
-            get => TimeZone.Id;
-            set => TimeZone = PhpTimeZone.GetTimeZone(value) ?? throw new ArgumentException();
+            get
+            {
+                return TimeZone.Id;
+            }
+            set
+            {
+                TimeZone = PhpTimeZone.GetTimeZone(value) ?? throw new ArgumentException();
+            }
         }
 
         #endregion
@@ -117,8 +129,6 @@ namespace Pchp.Library.DateTime
 
         private DateTime(Context ctx, System_DateTime time, TimeZoneInfo timezone)
         {
-            Debug.Assert(ctx != null);
-
             _ctx = ctx;
 
             this.Time = time;
@@ -127,8 +137,9 @@ namespace Pchp.Library.DateTime
 
         // public __construct ([ string $time = "now" [, DateTimeZone $timezone = NULL ]] )
         public DateTime(Context ctx, string time = null, DateTimeZone timezone = null)
-            : this(ctx)
         {
+            _ctx = ctx;
+
             ctx.SetProperty(DateTimeErrors.Empty);
             __construct(time, timezone);
         }
@@ -136,10 +147,9 @@ namespace Pchp.Library.DateTime
         // public __construct ([ string $time = "now" [, DateTimeZone $timezone = NULL ]] )
         public void __construct(string time = null, DateTimeZone timezone = null)
         {
-            if (timezone != null)
-            {
-                this.TimeZone = timezone._timezone;
-            }
+            this.TimeZone = (timezone != null)
+                ? timezone._timezone
+                : PhpTimeZone.GetCurrentTimeZone(_ctx);
 
             if (this.TimeZone == null)
             {
@@ -148,11 +158,7 @@ namespace Pchp.Library.DateTime
                 throw new ArgumentException();
             }
 
-            this.Time = StrToTime(_ctx, time, System_DateTime.UtcNow);
-
-            //this.date.Value = this.Time.ToString("yyyy-mm-dd HH:mm:ss");
-            //this.timezone_type.Value = 3;
-            //this.timezone.Value = TimeZone.Id;
+            this.Time = StrToTime(_ctx, time, System_DateTime.UtcNow, TimeZone);
         }
 
         #endregion
@@ -164,21 +170,23 @@ namespace Pchp.Library.DateTime
         /// In case error or warning occur, <see cref="DateTimeErrors"/> is set accordingly.
         /// </summary>
         [PhpHidden]
-        internal static System_DateTime StrToTime(Context ctx, string timestr, System_DateTime time)
+        internal static System_DateTime StrToTime(Context ctx, string timestr, System_DateTime time, TimeZoneInfo timeZone = null)
         {
             if (string.IsNullOrWhiteSpace(timestr) || (timestr = timestr.Trim()).EqualsOrdinalIgnoreCase("now"))
             {
                 return System_DateTime.UtcNow;
             }
 
-            var result = DateInfo.Parse(ctx, timestr, time, out var error);
-            if (error != null)
+            var result = DateInfo.Parse(ctx, timestr, time, timeZone, out var error);
+            if (error == null)
+            {
+                return result;
+            }
+            else
             {
                 ctx.SetProperty<DateTimeErrors>(new DateTimeErrors { Errors = new[] { error } });
                 throw new Spl.Exception(error);
             }
-
-            return DateTimeUtils.UnixTimeStampToUtc(result);
         }
 
         internal DateTimeImmutable AsDateTimeImmutable() => new DateTimeImmutable(_ctx, this.Time, this.TimeZone);
@@ -244,8 +252,7 @@ namespace Pchp.Library.DateTime
         [return: NotNull]
         public virtual DateTime add(DateInterval interval)
         {
-            Time = Time.Add(interval.AsTimeSpan());
-
+            Time = interval.Apply(Time, negate: false);
             return this;
         }
 
@@ -256,7 +263,7 @@ namespace Pchp.Library.DateTime
         [return: NotNull]
         public virtual DateTime sub(DateInterval interval)
         {
-            Time = Time.Subtract(interval.AsTimeSpan());
+            Time = interval.Apply(Time, negate: true);
             return this;
         }
 
@@ -276,12 +283,8 @@ namespace Pchp.Library.DateTime
                 throw new ArgumentNullException();
             }
 
-            if (timezone._timezone != this.TimeZone)
-            {
-                // convert this.Time from old TZ to new TZ
-                this.Time = TimeZoneInfo.ConvertTime(new System_DateTime(this.Time.Ticks, DateTimeKind.Unspecified), this.TimeZone, timezone._timezone);
-                this.TimeZone = timezone._timezone;
-            }
+            // No need to convert the time as the timezone is stored separately and the time is converted when needed
+            this.TimeZone = timezone._timezone;
 
             return this;
         }
@@ -344,7 +347,10 @@ namespace Pchp.Library.DateTime
         public static DateTime createFromFormat(Context ctx, string format, string time, DateTimeZone timezone = null)
         {
             // arguments
-            var tz = (timezone != null) ? timezone._timezone : PhpTimeZone.GetCurrentTimeZone(ctx);
+
+            // format: the time format string
+            // time: given time value
+            // timezone: timezone object or null, ignored when "time" specifies the timezone already
 
             var dateinfo = DateInfo.ParseFromFormat(format, time, out var errors);
 
@@ -355,11 +361,37 @@ namespace Pchp.Library.DateTime
                 return null;
             }
 
-            return new DateTime(ctx)
+            return new DateTime(
+                ctx,
+                dateinfo.GetDateTime(ctx, System_DateTime.UtcNow),  // UTC System.DateTime 
+                dateinfo.ResolveTimeZone(ctx, timezone?._timezone)
+            );
+        }
+
+        /// <summary>
+        /// Returns new DateTime object encapsulating the given DateTimeImmutable object.
+        /// </summary>
+        public static DateTime createFromImmutable(Context ctx, [NotNull]DateTimeImmutable datetime)
+        {
+            if (datetime == null)
             {
-                Time = dateinfo.GetDateTime(ctx, System_DateTime.UtcNow),
-                TimeZone = tz, // TODO: dateinfo.TimeZone
-            };
+                PhpException.ArgumentNull(nameof(datetime));
+                return null;
+            }
+
+            return new DateTime(ctx, datetime.Time, datetime.TimeZone);
+        }
+
+        public static DateTime createFromInterface(Context ctx, DateTimeInterface datetime)
+        {
+            if (DateTimeFunctions.GetDateTimeFromInterface(datetime, out var dt, out var tz))
+            {
+                return new DateTime(ctx, dt, tz);
+            }
+            else
+            {
+                throw new Spl.InvalidArgumentException();
+            }
         }
 
         [return: NotNull]
@@ -443,7 +475,6 @@ namespace Pchp.Library.DateTime
                 throw new ArgumentOutOfRangeException(string.Format("The time {0}:{1}:{2} is not valid.", hour, minute, second), e);
             }
 
-
             return this;
         }
 
@@ -473,16 +504,16 @@ namespace Pchp.Library.DateTime
 
         #region IPhpCloneable
 
-        [PhpHidden]
-        public object Clone()
+        object IPhpCloneable.Clone()
         {
             if (GetType() == typeof(DateTime))
             {
+                // quick new instance
                 return new DateTime(_ctx, Time, TimeZone);
             }
             else
             {
-                return Operators.CloneRaw(_ctx, this);
+                return Operators.CloneInPlace(MemberwiseClone());
             }
         }
 
@@ -502,6 +533,7 @@ namespace Pchp.Library.DateTime
     /// Representation of date and time.
     /// </summary>
     [PhpType(PhpTypeAttribute.InheritName), PhpExtension("date")]
+    [DebuggerDisplay(nameof(DateTimeImmutable), Type = PhpVariable.TypeNameObject)]
     public class DateTimeImmutable : DateTimeInterface, IPhpComparable, IPhpCloneable
     {
         readonly protected Context _ctx;
@@ -516,11 +548,16 @@ namespace Pchp.Library.DateTime
         /// </summary>
         internal TimeZoneInfo TimeZone { get; private set; }
 
+        [PhpFieldsOnlyCtor]
+        protected DateTimeImmutable(Context ctx)
+            : this(ctx, System_DateTime.UtcNow, PhpTimeZone.GetCurrentTimeZone(ctx))
+        {
+        }
+
         internal DateTimeImmutable(Context ctx, System_DateTime time, TimeZoneInfo tz)
         {
-            Debug.Assert(ctx != null);
+            _ctx = ctx;
 
-            this._ctx = ctx;
             this.Time = time;
             this.TimeZone = tz;
         }
@@ -528,13 +565,17 @@ namespace Pchp.Library.DateTime
         // public __construct ([ string $time = "now" [, DateTimeZone $timezone = NULL ]] )
         public DateTimeImmutable(Context ctx, string time = null, DateTimeZone timezone = null)
         {
-            Debug.Assert(ctx != null);
+            _ctx = ctx;
 
             ctx.SetProperty(DateTimeErrors.Empty);
+            __construct(time, timezone);
+        }
 
-            this.TimeZone = (timezone == null)
-                ? PhpTimeZone.GetCurrentTimeZone(ctx)
-                : timezone._timezone;
+        public void __construct(string time = null, DateTimeZone timezone = null)
+        {
+            this.TimeZone = (timezone != null)
+                ? timezone._timezone
+                : PhpTimeZone.GetCurrentTimeZone(_ctx);
 
             if (TimeZone == null)
             {
@@ -543,12 +584,7 @@ namespace Pchp.Library.DateTime
                 throw new ArgumentException();
             }
 
-            this._ctx = ctx;
-            this.Time = DateTime.StrToTime(ctx, time, System_DateTime.UtcNow);
-
-            //this.date.Value = this.Time.ToString("yyyy-mm-dd HH:mm:ss");
-            //this.timezone_type.Value = 3;
-            //this.timezone.Value = TimeZone.Id;
+            this.Time = DateTime.StrToTime(_ctx, time, System_DateTime.UtcNow, TimeZone);
         }
 
         #region DateTimeInterface
@@ -580,16 +616,19 @@ namespace Pchp.Library.DateTime
             return DateTimeUtils.UtcToUnixTimeStamp(Time);
         }
 
+        [return: NotNull]
         public DateTimeImmutable setTimestamp(int unixtimestamp)
         {
             return new DateTimeImmutable(_ctx, DateTimeUtils.UnixTimeStampToUtc(unixtimestamp), this.TimeZone);
         }
 
+        [return: NotNull]
         public DateTimeZone getTimezone()
         {
             return new DateTimeZone(this.TimeZone);
         }
 
+        [return: NotNull]
         public virtual DateTimeImmutable modify(string modify)
         {
             if (modify == null)
@@ -606,13 +645,16 @@ namespace Pchp.Library.DateTime
 
         #endregion
 
-        public virtual DateTimeImmutable add(DateInterval interval) => new DateTimeImmutable(_ctx, Time.Add(interval.AsTimeSpan()), TimeZone);
+        [return: NotNull]
+        public virtual DateTimeImmutable add(DateInterval interval) => new DateTimeImmutable(_ctx, interval.Apply(Time, negate: false), TimeZone);
+
+        [return: NotNull]
+        public virtual DateTimeImmutable sub(DateInterval interval) => new DateTimeImmutable(_ctx, interval.Apply(Time, negate: true), TimeZone);
+
         [return: CastToFalse]
         public static DateTimeImmutable createFromFormat(Context ctx, string format, string time, DateTimeZone timezone = null)
         {
             // arguments
-            var tz = (timezone != null) ? timezone._timezone : PhpTimeZone.GetCurrentTimeZone(ctx);
-
             var dateinfo = DateInfo.ParseFromFormat(format, time, out var errors);
 
             ctx.SetProperty<DateTimeErrors>(errors);
@@ -622,7 +664,11 @@ namespace Pchp.Library.DateTime
                 return null;
             }
 
-            return new DateTimeImmutable(ctx, dateinfo.GetDateTime(ctx, System_DateTime.UtcNow), tz); // TODO: dateinfo.TimeZones
+            return new DateTimeImmutable(
+                ctx,
+                dateinfo.GetDateTime(ctx, System_DateTime.UtcNow),
+                dateinfo.ResolveTimeZone(ctx, timezone?._timezone)
+            );
         }
 
         public static DateTimeImmutable createFromMutable(DateTime datetime)
@@ -638,8 +684,24 @@ namespace Pchp.Library.DateTime
             }
         }
 
+        public static DateTimeImmutable createFromInterface(Context ctx, DateTimeInterface datetime)
+        {
+            if (datetime is DateTimeImmutable immutable)
+            {
+                return immutable;
+            }
+
+            if (datetime is DateTime dt)
+            {
+                return dt.AsDateTimeImmutable();
+            }
+
+            throw new Spl.InvalidArgumentException();
+        }
+
         [return: NotNull]
         public static PhpArray/*!*/getLastErrors(Context ctx) => DateTime.getLastErrors(ctx);
+
         public static DateTimeImmutable __set_state(PhpArray array) => throw new NotImplementedException();
         public virtual DateTimeImmutable setDate(int year, int month, int day) => throw new NotImplementedException();
         public virtual DateTimeImmutable setISODate(int year, int week, int day = 1) => throw new NotImplementedException();
@@ -666,8 +728,6 @@ namespace Pchp.Library.DateTime
                 return new DateTimeImmutable(_ctx, time, timezone._timezone);
             }
         }
-        public virtual DateTimeImmutable sub(DateInterval interval) => new DateTimeImmutable(_ctx, Time.Subtract(interval.AsTimeSpan()), TimeZone);
-
         /// <summary>
         /// Returns the difference between two DateTime objects
         /// </summary>
@@ -681,7 +741,18 @@ namespace Pchp.Library.DateTime
 
         #region IPhpCloneable
 
-        public object Clone() => new DateTimeImmutable(_ctx, Time, TimeZone);
+        object IPhpCloneable.Clone()
+        {
+            if (GetType() == typeof(DateTimeImmutable))
+            {
+                // quick new instance
+                return new DateTimeImmutable(_ctx, Time, TimeZone);
+            }
+            else
+            {
+                return Operators.CloneInPlace(MemberwiseClone());
+            }
+        }
 
         #endregion
     }

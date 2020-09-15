@@ -10,7 +10,7 @@ using Pchp.Core.Resources;
 
 namespace Peachpie.Library.XmlDom
 {
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public class DOMNodeList : Traversable, Iterator, ArrayAccess
     {
         #region Fields and Properties
@@ -31,6 +31,12 @@ namespace Peachpie.Library.XmlDom
         /// The number of nodes in the list. The range of valid child node indices is 0 to length - 1 inclusive.
         /// </summary>
         public int length => _list.Count;
+
+        /// <summary>
+        /// Get number of nodes in the list.
+        /// Alias to <see cref="length"/>/
+        /// </summary>
+        public int count() => _list.Count;
 
         #endregion
 

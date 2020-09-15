@@ -36,12 +36,14 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         public static IEnumerable<IPhpPropertySymbol> EnumerateProperties(this INamedTypeSymbol t)
         {
-            var result = t.GetMembers().OfType<IPhpPropertySymbol>();
+            var result = t.GetMembers()
+                .OfType<IPhpPropertySymbol>()
+                .Where(p => p.Name.IndexOf('<') < 0);   // only valid declared properties // TODO: helper method
 
             var __statics = TryGetStaticsHolder(t);
             if (__statics != null)
             {
-                result = result.Concat(EnumerateProperties(__statics));
+                result = result.Concat(__statics.GetMembers().OfType<IPhpPropertySymbol>());
             }
 
             var btype = t.BaseType;
@@ -82,7 +84,7 @@ namespace Pchp.CodeAnalysis.Symbols
             if (statics != null)
             {
                 // readonly __statics.CONSTANT
-                field = statics.GetMembers(name).OfType<FieldSymbol>().Where(f => f.IsReadOnly).SingleOrDefault();
+                field = statics.GetMembers(name).OfType<FieldSymbol>().Where(f => f.IsReadOnly || f.IsConst).SingleOrDefault();
             }
 
             // const CONSTANT
@@ -200,6 +202,18 @@ namespace Pchp.CodeAnalysis.Symbols
             if (ifaces.Length != 0) list.AddRange(ifaces.Where(x => x.IsPhpUserType()));
 
             return list;
+        }
+
+        /// <summary>
+        /// Gets type kind as string, e.g. "class", "interface", "trait", ..
+        /// </summary>
+        public static string GetTypeKindKeyword(this TypeSymbol t)
+        {
+            if (t.IsInterfaceType()) return "interface";
+            if (t.IsTraitType()) return "trait";
+            if (t.IsStructType()) return "struct";
+            if (t.IsEnumType()) return "enum";
+            return "class";
         }
 
         /// <summary>

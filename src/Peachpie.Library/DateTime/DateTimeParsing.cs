@@ -20,6 +20,7 @@ using System.Diagnostics;
 using Pchp.Core;
 using Pchp.Library.Resources;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Pchp.Library.DateTime
 {
@@ -64,14 +65,19 @@ namespace Pchp.Library.DateTime
         public struct Relative
         {
             /// <summary>
-            /// Number of years/months/days.
+            /// Number of years/months.
             /// </summary>
-            public int y, m, d;
+            public int y, m;
+
+            /// <summary>
+            /// Number of days.
+            /// </summary>
+            public long d;
 
             /// <summary>
             /// Number of hours/minutes/seconds.
             /// </summary>
-            public int h, i, s;
+            public long h, i, s;
 
             /// <summary>
             /// Weekday (e.g. "next monday").
@@ -111,38 +117,149 @@ namespace Pchp.Library.DateTime
         /// </summary>
         public int z = 0;
 
+        /// <summary>
+        /// Optional.
+        /// The time zone abbreviation if specified.
+        /// Upper case.
+        /// </summary>
+        public string z_abbr;
+
         #endregion
 
         #region Parse
 
-        public static long Parse(Context ctx, string/*!*/ str, System.DateTime utcStart, out string error)
+        public static System.DateTime Parse(Context ctx, string/*!*/ str, System.DateTime utcStart, TimeZoneInfo timeZone, out string error)
         {
             Debug.Assert(str != null);
 
             var scanner = new Scanner(new StringReader(str.ToLowerInvariant()));
             while (true)
             {
-                Tokens token = scanner.GetNextToken();
+                var token = scanner.GetNextToken();
                 if (token == Tokens.ERROR || scanner.Errors > 0)
                 {
                     error = string.Format(LibResources.parse_error, scanner.Position, str.Substring(scanner.Position));
-                    return 0;
+                    return System.DateTime.MinValue;
                 }
 
                 if (token == Tokens.EOF)
                 {
-                    return scanner.Time.GetUnixTimeStamp(ctx, utcStart, out error);
+                    error = null;
+                    return scanner.Time.GetDateTime(ctx, utcStart, timeZone);
                 }
             }
         }
 
         #endregion
 
-        #region GetUnixTimeStamp
+        #region
 
-        public System.DateTime GetDateTime(Context ctx, System.DateTime utcStart)
+        internal const int TIMELIB_ZONETYPE_OFFSET = 1;
+        internal const int TIMELIB_ZONETYPE_ABBR = 2;
+        internal const int TIMELIB_ZONETYPE_ID = 3;
+
+        /// <summary>
+        /// 1: offset in form of +00:00
+        /// 2: timezone abbreviation
+        /// 3: TimeZone object
+        /// </summary>
+        public static int GetTimeLibZoneType(TimeZoneInfo zone)
         {
-            var zone = PhpTimeZone.GetCurrentTimeZone(ctx);
+            if (zone == null)
+            {
+                return TIMELIB_ZONETYPE_OFFSET;
+            }
+
+            var tz = zone.Id;
+
+            if (tz.Length != 0 && (tz[0] == '+' || tz[0] == '-'))
+            {
+                // 1: offset
+                return DateInfo.TIMELIB_ZONETYPE_OFFSET;
+            }
+            else if (DateInfo.GetZoneOffsetFromAbbr(tz, out _))
+            {
+                // 2: abbreviation
+                return DateInfo.TIMELIB_ZONETYPE_ABBR;
+            }
+            else
+            {
+                // 3: A timezone identifier
+                return DateInfo.TIMELIB_ZONETYPE_ID;
+            }
+        }
+
+        string GetTimeZoneString()
+        {
+            if (have_zone > 0)
+            {
+                if (z_abbr != null)
+                {
+                    Debug.Assert(z_abbr.ToUpperInvariant() == z_abbr);  // is upper case
+                    return z_abbr;
+                }
+                else
+                {
+                    // [+-]00:00
+                    return
+                        (z < 0 ? "-" : "+") +
+                        (z / 60).ToString("D2") +
+                        ":" +
+                        (z % 60).ToString("D2");
+                }
+            }
+
+            //
+            throw new InvalidOperationException();
+        }
+
+        /// <summary>Gets the time zone object describing the time zone - <see cref="z"/>.
+        /// Its ID is either in the offset format or the abbreviation when specified.</summary>
+        /// <exception cref="InvalidOperationException">The time zone is not specified.</exception>
+        public TimeZoneInfo ResolveTimeZone()
+        {
+            if (have_zone > 0)
+            {
+                //// fast special cases:
+                //if (z == 0)
+                //{
+                //    if (z_abbr == null || string.Equals(z_abbr, "UTC", StringComparison.OrdinalIgnoreCase))
+                //    {
+                //        return TimeZoneInfo.Utc;
+                //    }
+                //}
+
+                // create time zone object wth our offset:
+                var name = GetTimeZoneString();
+                return TimeZoneInfo.CreateCustomTimeZone(name, TimeSpan.FromMinutes(z), null, null);
+            }
+
+            throw new InvalidOperationException();
+        }
+
+        /// <summary>
+        /// Gets time zone object describing the parsed time zone, or a default time zone.
+        /// </summary>
+        public TimeZoneInfo ResolveTimeZone(Context ctx, TimeZoneInfo @default = null)
+        {
+            if (have_zone > 0)
+            {
+                // note: provided default time zone is ignored
+
+                var name = GetTimeZoneString();
+                return TimeZoneInfo.CreateCustomTimeZone(name, TimeSpan.FromMinutes(z), name, name);
+            }
+            else
+            {
+                return @default // provided time zone
+                    ?? PhpTimeZone.GetCurrentTimeZone(ctx)    // default time zone
+                    ?? throw new InvalidOperationException(); // does not happen
+            }
+        }
+
+        public System.DateTime GetDateTime(Context ctx, System.DateTime utcStart, TimeZoneInfo timeZone = null)
+        {
+            var zone = timeZone ?? PhpTimeZone.GetCurrentTimeZone(ctx);
             var start = TimeZoneInfo.ConvertTime(utcStart, TimeZoneInfo.Utc, zone);// zone.ToLocalTime(utcStart);
 
             // following operates on local time defined by the parsed info or by the current time zone //
@@ -152,12 +269,21 @@ namespace Pchp.Library.DateTime
                 h = 0;
                 i = 0;
                 s = 0;
+                f = 0;
             }
             else
             {
                 if (h == -1) h = start.Hour;
                 if (i == -1) i = start.Minute;
                 if (s == -1) s = start.Second;
+
+                if (f < 0) f = start.Millisecond * 0.001;
+                else if (f > 0)
+                {
+                    var relative_sec = Math.Truncate(f);
+                    f -= relative_sec;
+                    relative.s += (int)relative_sec;
+                }
             }
 
             if (y == -1) y = start.Year;
@@ -168,14 +294,31 @@ namespace Pchp.Library.DateTime
 
             CheckOverflows(y, m, ref d, ref h, out var days_overflow);
 
-            var result = new System.DateTime(y, m, d, h, i, s, DateTimeKind.Unspecified);
+            var result = new System.DateTime(y, m, d, h, i, s, (int)(f * 1000), DateTimeKind.Unspecified);
 
-            result = result.AddDays(relative.d + days_overflow);
-            result = result.AddMonths(relative.m);
-            result = result.AddYears(relative.y);
-            result = result.AddHours(relative.h);
-            result = result.AddMinutes(relative.i);
-            result = result.AddSeconds(relative.s);
+            // relative years and months:
+            result = result.AddMonths(relative.y * 12 + relative.m);
+
+            // check relative ranges
+            if (relative.s >= long.MaxValue / TimeSpan.TicksPerSecond) return System.DateTime.MaxValue;
+            if (relative.s <= long.MinValue / TimeSpan.TicksPerSecond) return System.DateTime.MinValue;
+
+            // relative seconds
+            long relative_ticks =
+                relative.s * TimeSpan.TicksPerSecond +
+                relative.i * TimeSpan.TicksPerMinute +
+                relative.h * TimeSpan.TicksPerHour +
+                (relative.d + days_overflow) * TimeSpan.TicksPerDay;
+
+            try
+            {
+                result = result.AddTicks(relative_ticks);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                if (relative_ticks > 0) return System.DateTime.MaxValue;
+                if (relative_ticks < 0) return System.DateTime.MinValue;
+            }
 
             // adds relative weekday:
             if (have_weekday_relative > 0)
@@ -196,6 +339,7 @@ namespace Pchp.Library.DateTime
             if (have_zone > 0)
             {
                 result = result.AddMinutes(-z);
+                result = TimeZoneInfo.ConvertTimeToUtc(result, TimeZoneInfo.Utc); // Just mark that it's in UTC already
             }
             else
             {
@@ -214,17 +358,19 @@ namespace Pchp.Library.DateTime
                 result = TimeZoneInfo.ConvertTime(result, zone, TimeZoneInfo.Utc);// zone.ToUniversalTime(result);
             }
 
+            Debug.Assert(result.Kind == DateTimeKind.Utc);
+
             //
             return result;
         }
 
-        private long GetUnixTimeStamp(Context ctx, System.DateTime utcStart, out string error)
-        {
-            var result = GetDateTime(ctx, utcStart);
+        //private long GetUnixTimeStamp(Context ctx, System.DateTime utcStart, out string error)
+        //{
+        //    var result = GetDateTime(ctx, utcStart);
 
-            error = null;
-            return DateTimeUtils.UtcToUnixTimeStamp(result);
-        }
+        //    error = null;
+        //    return DateTimeUtils.UtcToUnixTimeStamp(result);
+        //}
 
         #endregion
 
@@ -290,7 +436,7 @@ namespace Pchp.Library.DateTime
         internal static int DaysInMonthFixed(int year, int month)
         {
             // NOTE: DateTime only works for years in [1..9999]
-            
+
             if (year <= 0) year = 1;    // this is correct, since leap years only exist **after** the year 0 (there is no year 0)
 
             return System.DateTime.DaysInMonth(year, month);
@@ -327,19 +473,58 @@ namespace Pchp.Library.DateTime
             }
         }
 
+        public static int ParseSignedInt(string str, ref int pos, int maxDigits)
+        {
+            var value = ParseSignedLong(str, ref pos, maxDigits);
+
+            if (value <= int.MinValue) return int.MinValue;
+            if (value >= int.MaxValue) return int.MaxValue;
+
+            return (int)value;
+        }
+
+        public static int ParseUnsignedInt(string str, ref int pos, int maxDigits)
+        {
+            var value = ParseUnsignedLong(str, ref pos, maxDigits);
+
+            if (value >= int.MaxValue) return int.MaxValue;
+
+            return (int)value;
+        }
+
+        public static int ParseUnsignedInt(string str, ref int pos, int maxDigits, out int len)
+        {
+            var value = ParseUnsignedLong(str, ref pos, maxDigits, out len);
+
+            if (value >= int.MaxValue) return int.MaxValue;
+
+            return (int)value;
+        }
+
         /// <summary>
         /// Parse integer with possible sign of a specified maximal number of digits.
         /// </summary>
-        public static int ParseSignedInt(string str, ref int pos, int maxDigits)
+        public static long ParseSignedLong(string str, ref int pos, int maxDigits)
         {
-            int sign = +1;
-
             // skip non-digit, non-sign chars:
-            while (pos < str.Length && !Char.IsDigit(str, pos) && str[pos] != '+' && str[pos] != '-')
+            while (pos < str.Length)
             {
+                var ch = str[pos];
+
+                if (char.IsDigit(ch) || ch == '+' || ch == '-')
+                {
+                    break;
+                }
+
                 pos++;
             }
-            if (pos == str.Length) return -1;
+
+            if (pos == str.Length)
+            {
+                return -1;
+            }
+
+            bool sign = false;
 
             // set sign:
             if (str[pos] == '+')
@@ -348,43 +533,75 @@ namespace Pchp.Library.DateTime
             }
             else if (str[pos] == '-')
             {
-                sign = -1;
+                sign = true;
                 pos++;
             }
 
-            return sign * ParseUnsignedInt(str, ref pos, maxDigits);
+            var value = ParseUnsignedLong(str, ref pos, maxDigits);
+
+            if (sign)
+            {
+                // value is unsigned, no overflow check
+                value = -value;
+            }
+
+            return value;
         }
 
         /// <summary>
         /// Parse unsigned integer of a specified maximal length.
         /// </summary>
-        public static int ParseUnsignedInt(string str, ref int pos, int maxDigits)          // PHP: timelib_get_nr
+        public static long ParseUnsignedLong(string str, ref int pos, int maxDigits)          // PHP: timelib_get_nr
         {
-            return ParseUnsignedInt(str, ref pos, maxDigits, out _);
+            return ParseUnsignedLong(str, ref pos, maxDigits, out _);
         }
 
         /// <summary>
         /// Parse unsigned integer of a specified maximal length.
+        /// Returns parsed number, or <c>-1</c> if there are no digits, or <see cref="long.MaxValue"/> if value overflows.
         /// </summary>
-        public static int ParseUnsignedInt(string str, ref int pos, int maxDigits, out int len)          // PHP: timelib_get_nr
+        public static long ParseUnsignedLong(string str, ref int pos, int maxDigits, out int len)          // PHP: timelib_get_nr
         {
             len = 0;
 
             // skips non-digits:
-            while (pos < str.Length && !Char.IsDigit(str, pos))
+            while (pos < str.Length && !char.IsDigit(str, pos))
             {
                 pos++;
             }
-            if (pos == str.Length) return -1;
 
-            int begin = pos;
-            while (pos < str.Length && Char.IsDigit(str, pos) && len < maxDigits)
+            if (pos == str.Length)
             {
+                return -1;
+            }
+
+            long result = 0;
+            while (pos < str.Length && len < maxDigits)
+            {
+                var ch = str[pos];
+                if (ch < '0' || ch > '9')
+                {
+                    break;
+                }
+
+                var num = ch - '0';
+
+                if ((result < long.MaxValue / 10) ||
+                    (result == long.MaxValue / 10 && num <= long.MaxValue % 10))
+                {
+                    result = (result * 10) + num;
+                }
+                else
+                {
+                    result = long.MaxValue;
+                }
+
+                //
                 pos++;
                 len++;
             }
 
-            return Int32.Parse(str.Substring(begin, len));
+            return result;
         }
 
         /// <summary>
@@ -562,7 +779,6 @@ namespace Pchp.Library.DateTime
             return 0;
         }
 
-
         static void SkipSpaces(string str, ref int pos) // timelib_eat_spaces
         {
             while (pos < str.Length && char.IsWhiteSpace(str, pos))
@@ -614,9 +830,9 @@ namespace Pchp.Library.DateTime
         /// <summary>
         /// Sets relative time and date information according to the parsed text.
         /// </summary>
-        public void SetRelative(string str, int amount, int behavior)
+        public void SetRelative(string str, long amount, int behavior)
         {
-            switch (str)
+            switch (str.ToLowerInvariant())
             {
                 case "sec":
                 case "secs":
@@ -644,7 +860,7 @@ namespace Pchp.Library.DateTime
 
                 case "month":
                 case "months":
-                    relative.m += amount;
+                    relative.m += (int)amount;
                     return;
 
                 case "week":
@@ -661,7 +877,7 @@ namespace Pchp.Library.DateTime
 
                 case "year":
                 case "years":
-                    relative.y += amount;
+                    relative.y += (int)amount;
                     return;
             }
 
@@ -682,30 +898,45 @@ namespace Pchp.Library.DateTime
             }
         }
 
+        /// <summary>Map of a week day name into it's ordinal. Sunday is zero.</summary>
+        readonly static Dictionary<string, int> s_weedays = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "mon", 1 },
+            { "monday", 1 },
+
+            { "tue", 2 },
+            { "tuesday" , 2 },
+
+            { "wed", 3 },
+            { "wednesday" , 3 },
+
+            { "thu", 4 },
+            { "thursday" , 4 },
+
+            { "fri", 5 },
+            { "friday" , 5 },
+
+            { "sat", 6 },
+            { "saturday" , 6 },
+
+            { "sun", 0 },
+            { "sunday" , 0 },
+        };
+
         /// <summary>
         /// Sets relative week day according to a specified text.
         /// </summary>
         public bool SetWeekDay(string str)
         {
-            switch (str)
+            if (s_weedays.TryGetValue(str, out var weekday))
             {
-                case "mon":
-                case "monday": relative.weekday = 1; break;
-                case "tue":
-                case "tuesday": relative.weekday = 2; break;
-                case "wed":
-                case "wednesday": relative.weekday = 3; break;
-                case "thu":
-                case "thursday": relative.weekday = 4; break;
-                case "fri":
-                case "friday": relative.weekday = 5; break;
-                case "sat":
-                case "saturday": relative.weekday = 6; break;
-                case "sun":
-                case "sunday": relative.weekday = 0; break;
-                default: return false;
+                relative.weekday = weekday;
+                return true;
             }
-            return true;
+            else
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -729,84 +960,119 @@ namespace Pchp.Library.DateTime
         {
             if (have_zone > 0) return false;
 
+            // skip leading whitespace and opening parenthesis:
             while (pos < str.Length && (str[pos] == ' ' || str[pos] == '('))
                 pos++;
 
-            bool result;
-
-            if (pos < str.Length && str[pos] == '+')
+            if (pos >= str.Length)
             {
-                pos++;
-                z = ParseTimeZone(str, ref pos);
-                result = true;
+                return false;
             }
-            else if (pos < str.Length && str[pos] == '-')
+
+            if (str[pos] == '+')
             {
                 pos++;
-                z = -ParseTimeZone(str, ref pos);
-                result = true;
+                if (TryParseTimeZoneOffset(str, pos, out z))
+                {
+                    HAVE_TZ();
+                }
+                pos = str.Length;
+            }
+            else if (str[pos] == '-')
+            {
+                pos++;
+                if (TryParseTimeZoneOffset(str, pos, out z))
+                {
+                    z = -z;
+                    HAVE_TZ();
+                }
+                pos = str.Length;
             }
             else
             {
-                result = SetZoneOffset(str.Substring(pos, str.Length - pos));
+                var abbr = str.Substring(pos);
+                if (GetZoneOffsetFromAbbr(abbr, out z))
+                {
+                    z_abbr = abbr.ToUpperInvariant();
+                    HAVE_TZ();
+                }
+
                 pos = str.Length;
             }
 
+            // skip trailing whitespace and closing parenthesis:
             while (pos < str.Length && str[pos] == ')')
                 pos++;
 
-            if (result) HAVE_TZ();
-
-            return result;
+            return have_zone > 0;
         }
 
         /// <summary>
-        /// Parses numeric timezones. Returns offset in minutes.
+        /// Parses numeric timezones. Resolves offset in minutes.
         /// </summary>
-        static int ParseTimeZone(string str, ref int pos)                               // PHP: timelib_parse_tz_cor
+        internal static bool TryParseTimeZoneOffset(string str, int pos, out int minutes)                               // PHP: timelib_parse_tz_cor
         {
-            int result = 0;
             int length = str.Length - pos;
+            int value;
 
             switch (length)
             {
                 case 1: // 0
                 case 2: // 00
-                    result = Int32.Parse(str.Substring(pos, length)) * 60;
+                    if (int.TryParse(str.Substring(pos, length), out value))
+                    {
+                        minutes = value * 60;
+                        return true;
+                    }
                     break;
 
                 case 3: // 000, 0:0
                 case 4: // 0000, 0:00, 00:0
+
+                    // TODO: "TryParse":
+
                     if (str[pos + 1] == ':')       // 0:0, 0:00
                     {
-                        result = (str[pos] - '0') * 60 + Int32.Parse(str.Substring(pos + 2, length - 2));
+                        minutes = (str[pos] - '0') * 60 + int.Parse(str.Substring(pos + 2, length - 2));
                     }
                     else if (str[pos + 2] == ':')  // 00:0
                     {
-                        result = ((str[pos] - '0') * 10 + (str[pos + 1] - '0')) * 60 + (str[pos + 3] - '0');
+                        minutes = ((str[pos] - '0') * 10 + (str[pos + 1] - '0')) * 60 + (str[pos + 3] - '0');
                     }
                     else                          // 000, 0000
                     {
-                        result = Int32.Parse(str.Substring(pos, length));
-                        result = (result / 100) * 60 + result % 100;
+                        minutes = int.Parse(str.Substring(pos, length));
+                        minutes = (minutes / 100) * 60 + minutes % 100;
                     }
-                    break;
+                    return true;
 
                 case 5: // 00:00
-                    result = Int32.Parse(str.Substring(pos, 2)) * 60 + Int32.Parse(str.Substring(pos + 3, 2));
+
+                    if (int.TryParse(str.Substring(pos, 2), NumberStyles.None, CultureInfo.InvariantCulture.NumberFormat, out value))
+                    {
+                        minutes = value * 60;
+
+                        if (int.TryParse(str.Substring(pos + 3, 2), NumberStyles.None, CultureInfo.InvariantCulture.NumberFormat, out value))
+                        {
+                            minutes += value;
+                            return true;
+                        }
+                    }
                     break;
             }
 
-            return result;
+            //
+            minutes = 0;
+            return false;
         }
 
         /// <summary>
         /// Sets zone offset by zone abbreviation.
         /// </summary>
-        private bool SetZoneOffset(string/*!*/ abbreviation)                             // PHP: timelib_lookup_zone, zone_search
+        internal static bool GetZoneOffsetFromAbbr(string/*!*/ abbreviation, out int z)                             // PHP: timelib_lookup_zone, zone_search
         {
             // source http://www.worldtimezone.com/wtz-names/timezonenames.html
-            switch (abbreviation)
+            switch (abbreviation.ToLowerInvariant())
             {
                 case "z":
                 case "utc":
@@ -1075,27 +1341,17 @@ namespace Pchp.Library.DateTime
                 case "zp5": z = 60 * 5; break;
                 case "zp6": z = 60 * 6; break;
 
-                default: return false;
+                default:
+                    z = default;
+                    return false;
             }
 
             return true;
         }
 
-        private static void AddWarning(ref DateTimeErrors errors, string message)
-        {
-            if (errors == null) errors = new DateTimeErrors();
-            if (errors.Warnings == null) errors.Warnings = new List<string>();
+        private static void AddWarning(ref DateTimeErrors errors, string message) => DateTimeErrors.AddWarning(ref errors, message);
 
-            errors.Warnings.Add(message);
-        }
-
-        private static void AddError(ref DateTimeErrors errors, string message)
-        {
-            if (errors == null) errors = new DateTimeErrors();
-            if (errors.Errors == null) errors.Errors = new List<string>();
-
-            errors.Errors.Add(message);
-        }
+        private static void AddError(ref DateTimeErrors errors, string message) => DateTimeErrors.AddError(ref errors, message);
 
         #endregion
 
@@ -1105,14 +1361,15 @@ namespace Pchp.Library.DateTime
         /// Parses interval string according to ISO8601 Duration.
         /// C# implementation: <see cref="System.Xml.XmlConvert.ToTimeSpan"/>; but it does not recognize <c>'W'</c> speification.
         /// </summary>
-        internal static bool TryParseIso8601Duration(string s, out TimeSpan result)
+        internal static bool TryParseIso8601Duration(string s, out DateInfo result, out bool negative)
         {
             int length;
             int value, pos, numDigits;
 
             int years = 0, months = 0, days = 0, hours = 0, minutes = 0, seconds = 0;
             uint nanoseconds = 0;
-            bool negative = false;
+
+            negative = false;
 
             s = s.Trim();
             length = s.Length;
@@ -1126,10 +1383,6 @@ namespace Pchp.Library.DateTime
             {
                 pos++;
                 negative = true;
-            }
-            else
-            {
-                nanoseconds = 0;
             }
 
             if (pos >= length) goto InvalidFormat;
@@ -1266,63 +1519,25 @@ namespace Pchp.Library.DateTime
             //// At least one part must be defined
             //if (parts == Parts.HasNone) goto InvalidFormat;
 
-            result = ToTimeSpan(years, months, days, hours, minutes, seconds, nanoseconds, negative);
+            result = new DateInfo
+            {
+                y = years,
+                m = months,
+                d = days,
+                h = hours,
+                i = minutes,
+                s = seconds,
+                f = nanoseconds / 1000000000.0,
+            };
+
             return true;
 
         InvalidFormat:
         Error:
 
-            result = default(TimeSpan);
+            result = default;
+            negative = default;
             return false;
-        }
-
-        static TimeSpan ToTimeSpan(int years, int months, int days, int hours, int minutes, int seconds, uint nanoseconds, bool negative)
-        {
-            TimeSpan result;
-            ulong ticks = 0;
-
-            // Throw error if result cannot fit into a long
-            checked
-            {
-                // Discard year and month parts if constructing TimeSpan for DayTimeDuration
-                ticks += ((ulong)years + (ulong)months / 12) * 365;
-                ticks += ((ulong)months % 12) * 30;
-
-                // Discard day and time parts if constructing TimeSpan for YearMonthDuration
-                ticks += (ulong)days;
-
-                ticks *= 24;
-                ticks += (ulong)hours;
-
-                ticks *= 60;
-                ticks += (ulong)minutes;
-
-                ticks *= 60;
-                ticks += (ulong)seconds;
-
-                // Tick count interval is in 100 nanosecond intervals (7 digits)
-                ticks *= (ulong)TimeSpan.TicksPerSecond;
-                ticks += (ulong)nanoseconds / 100;
-
-                if (negative)
-                {
-                    // Handle special case of Int64.MaxValue + 1 before negation, since it would otherwise overflow
-                    if (ticks == (ulong)long.MaxValue + 1)
-                    {
-                        result = new TimeSpan(long.MinValue);
-                    }
-                    else
-                    {
-                        result = new TimeSpan(-((long)ticks));
-                    }
-                }
-                else
-                {
-                    result = new TimeSpan((long)ticks);
-                }
-            }
-
-            return result;
         }
 
         #endregion
@@ -1339,9 +1554,11 @@ namespace Pchp.Library.DateTime
         /// <returns>Parsed date information.</returns>
         public static DateInfo ParseFromFormat(string format, string str, out DateTimeErrors errors)
         {
-            if (format == null) throw new ArgumentNullException(nameof(format));
-            if (str == null) throw new ArgumentNullException(nameof(str));
+            // `null` is handled in the same way as empty string "" // https://github.com/peachpiecompiler/peachpie/issues/820
+            format ??= string.Empty;
+            str ??= string.Empty;
 
+            //
             errors = null;
 
             var time = new DateInfo();
@@ -1505,6 +1722,8 @@ namespace Pchp.Library.DateTime
                             //int tz_not_found;
                             //s->time->z = timelib_parse_zone((char**)&ptr, &s->time->dst, s->time, &tz_not_found, s->tzdb, tz_get_wrapper);
                             //if (tz_not_found)
+
+                            if (!time.SetTimeZone(str, ref si))
                             {
                                 AddError(ref errors, DateResources.tz_notfound);
                             }
@@ -1605,6 +1824,11 @@ namespace Pchp.Library.DateTime
             {
                 if (allow_extra) AddWarning(ref errors, DateResources.trailing_data);
                 else AddError(ref errors, DateResources.trailing_data);
+            }
+
+            if (fi < format.Length)
+            {
+                AddError(ref errors, DateResources.data_missing);
             }
 
             //

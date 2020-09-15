@@ -1,4 +1,6 @@
-﻿using System;
+﻿#nullable enable
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -11,34 +13,60 @@ namespace Pchp.Core.Utilities
         /// <summary>
         /// Fixes top level variable name to not contain spaces and dots (as it is in PHP);
         /// </summary>
-        static string EncodeTopLevelName(string/*!*/name)
+        public static string EncodeTopLevelName(string/*!*/name)
         {
-            Debug.Assert(name != null);
+            if (name == null) throw new ArgumentNullException(nameof(name));
 
             return name.Replace('.', '_').Replace(' ', '_');
         }
 
-        static PhpArray EnsureItemArray(PhpArray array, IntStringKey key)
+        static readonly Func<string, string> s_rawnamefunc = FuncExtensions.Identity<string>();
+        static readonly Func<string, string> s_encodenamefunc = EncodeTopLevelName;
+
+        public static PhpArray EnsureItemArray(PhpArray array, IntStringKey key)
         {
             PhpArray result;
 
             if (key.IsEmpty)
             {
                 result = new PhpArray();
-                array.AddValue(result);
+                array.Add(result);
             }
             else
             {
-                if (!array.TryGetValue(key, out var value) || (result = value.AsArray()) == null)
+                if (array.TryGetValue(key, out var value) && value.IsPhpArray(out var tmp) && tmp != null)
+                {
+                    result = tmp;
+                }
+                else
                 {
                     result = new PhpArray();
-                    array.SetItemValue(key, result);
+                    array[key] = result;
                 }
             }
 
             //
 
             return result;
+        }
+
+        public static void EnsureItemArray(PhpArray array, IntStringKey item, IntStringKey key, PhpValue value)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if (item.IsEmpty) throw new ArgumentException(nameof(item));
+
+            // array[item]: array(key => value)
+
+            var itemarr = (PhpArray)array.EnsureItemArray(item);
+
+            if (key.IsEmpty)
+            {
+                itemarr.Add(value);
+            }
+            else
+            {
+                itemarr[key] = value;
+            }
         }
 
         /// <summary>
@@ -50,11 +78,15 @@ namespace Pchp.Core.Utilities
         /// <param name="name">A unparsed name of variable.</param>
         /// <param name="value">A value to be added.</param>
         /// <param name="subname">A name of intermediate array inserted before the value.</param>
-        public static void AddVariable(this PhpArray/*!*/ array, string name, string value, string subname = null)
+        /// <param name="rawname">If set, the array keys are not sanitized. By default, characters <c>'.'</c> and <c>' '</c> are replaced with <c>'_'</c>.</param>
+        public static void AddVariable(this PhpArray/*!*/ array, string name, PhpValue value, string? subname = null, bool rawname = false)
         {
-            Debug.Assert(array != null);
-            Debug.Assert(name != null);
+            if (array == null) throw new ArgumentNullException(nameof(array));
+            if (name == null) throw new ArgumentNullException(nameof(name));
+
             Debug.Assert(value != null);
+
+            var namefunc = rawname ? s_rawnamefunc : s_encodenamefunc;
 
             IntStringKey key;
 
@@ -66,7 +98,7 @@ namespace Pchp.Core.Utilities
             if (left > 0 && left < name.Length - 1 && (right = name.IndexOf(']', left + 1)) >= 0)
             {
                 // the variable name is a key to the "array", dots are replaced by underscores in top-level name:
-                key = new IntStringKey(EncodeTopLevelName(name.Substring(0, left)));
+                key = new IntStringKey(namefunc(name.Substring(0, left)));
 
                 // ensures that all [] operators in the chain except for the last one are applied on an array:
                 for (; ; )
@@ -86,7 +118,10 @@ namespace Pchp.Core.Utilities
 
                     // breaks if ']' is not followed by '[':
                     left = right + 1;
-                    if (left == name.Length || name[left] != '[') break;
+                    if (left == name.Length || name[left] != '[')
+                    {
+                        break;
+                    }
 
                     // the next right brace:
                     right = name.IndexOf(']', left + 1);
@@ -94,26 +129,26 @@ namespace Pchp.Core.Utilities
 
                 if (key.Equals(IntStringKey.EmptyStringKey))
                 {
-                    array.AddValue(PhpValue.Create(value));
+                    array.AddValue(value);
                 }
                 else
                 {
-                    array.SetItemValue(key, PhpValue.Create(value));
+                    array.SetItemValue(key, value);
                 }
             }
             else
             {
                 // no array pattern in variable name, "name" is a top-level key:
-                key = new IntStringKey(EncodeTopLevelName(name));
+                key = new IntStringKey(namefunc(name));
 
                 // inserts a subname on the next level:
                 if (subname != null)
                 {
-                    EnsureItemArray(array, key).SetItemValue(Convert.StringToArrayKey(subname), PhpValue.Create(value));
+                    EnsureItemArray(array, key).SetItemValue(Convert.StringToArrayKey(subname), value);
                 }
                 else
                 {
-                    array.SetItemValue(key, PhpValue.Create(value));
+                    array.SetItemValue(key, value);
                 }
             }
         }

@@ -48,6 +48,7 @@ namespace Pchp.Library
 
     #endregion
 
+    [PhpExtension("standard")]
     public static class Processes
     {
         #region popen, pclose
@@ -289,7 +290,7 @@ namespace Pchp.Library
                     return false;
                 }
 
-                int desc_no = e.CurrentKey.Integer;
+                var desc_no = e.CurrentKey.Integer;
 
                 switch (desc_no)
                 {
@@ -309,7 +310,7 @@ namespace Pchp.Library
             var descriptors_enum = descriptors.GetFastEnumerator();
             while (descriptors_enum.MoveNext())
             {
-                int desc_no = descriptors_enum.CurrentKey.Integer;
+                var desc_no = descriptors_enum.CurrentKey.Integer;
 
                 StreamAccessOptions access;
                 Stream stream;

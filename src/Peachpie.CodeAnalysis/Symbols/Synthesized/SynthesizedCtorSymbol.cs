@@ -89,7 +89,9 @@ namespace Pchp.CodeAnalysis.Symbols
 
         readonly int _sourceParamsCount;
 
-        public bool IsInitFieldsOnly { get; internal set; }
+        public override bool IsInitFieldsOnly => IsInitFieldsOnlyPrivate;
+
+        bool IsInitFieldsOnlyPrivate;
 
         protected SynthesizedPhpCtorSymbol(SourceTypeSymbol containingType, Accessibility accessibility,
             MethodSymbol basector, MethodSymbol __construct, int paramsLimit = int.MaxValue)
@@ -127,19 +129,17 @@ namespace Pchp.CodeAnalysis.Symbols
 
             if (IsInitFieldsOnly)
             {
-                // QueryValue<DummyFieldsOnlyCtor> _
-                var dummy = DeclaringCompilation.CoreTypes.QueryValue_T.Symbol.Construct(DeclaringCompilation.CoreTypes.QueryValue_DummyFieldsOnlyCtor);
-                yield return new SpecialParameterSymbol(this, dummy, "_", index++);
+                // DummyFieldsOnlyCtor _
+                yield return new SpecialParameterSymbol(this, DeclaringCompilation.CoreTypes.DummyFieldsOnlyCtor, "_", index++);
             }
 
             // same parameters as PHP constructor
             foreach (var p in baseparams)
             {
                 if (SpecialParameterSymbol.IsContextParameter(p)) continue;
-                if (SpecialParameterSymbol.IsQueryValueParameter(p, out var _, out var t) && t == SpecialParameterSymbol.QueryValueTypes.DummyFieldsOnlyCtor) continue;
+                if (SpecialParameterSymbol.IsDummyFieldsOnlyCtorParameter(p)) continue;
 
-                yield return new SynthesizedParameterSymbol(this, p.Type, index++, p.RefKind, p.Name, p.IsParams,
-                    explicitDefaultConstantValue: p.ExplicitDefaultConstantValue);
+                yield return SynthesizedParameterSymbol.Create(this, p, index++);
             }
         }
 
@@ -156,11 +156,11 @@ namespace Pchp.CodeAnalysis.Symbols
         /// - Another ctor is created in order to call the main constructor and call PHP constructor function.
         /// - Ghost stubs of the other ctor are created in order to pass default parameter values which cannot be stored in metadata (e.g. array()).
         /// </remarks>
-        public static IEnumerable<MethodSymbol> CreateCtors(SourceTypeSymbol type)
+        public static ImmutableArray<MethodSymbol> CreateCtors(SourceTypeSymbol type)
         {
             if (type.IsStatic || type.IsInterface)
             {
-                yield break;
+                return ImmutableArray<MethodSymbol>.Empty;
             }
 
             // resolve php constructor
@@ -187,38 +187,39 @@ namespace Pchp.CodeAnalysis.Symbols
             {
                 // type.BaseType was not resolved, reported by type.BaseType
                 // TODO: Err & ErrorMethodSymbol
-                yield break;
+                return ImmutableArray<MethodSymbol>.Empty;
             }
 
             MethodSymbol defaultctor = null; // .ctor to be used by default
-
+            var ctors = ImmutableArray.CreateBuilder<MethodSymbol>();
+            
             // create .ctor(s)
             if (phpconstruct == null)
             {
-                yield return defaultctor = new SynthesizedPhpCtorSymbol(type, Accessibility.Public, basector, null);
+                ctors.Add(defaultctor = new SynthesizedPhpCtorSymbol(type, Accessibility.Public, basector, null));
             }
             else
             {
                 var fieldsinitctor = new SynthesizedPhpCtorSymbol(type, Accessibility.ProtectedOrInternal, basector, null)
                 {
-                    IsInitFieldsOnly = true,
+                    IsInitFieldsOnlyPrivate = true,
                     IsEditorBrowsableHidden = true,
                 };
-                yield return fieldsinitctor;
+                ctors.Add(fieldsinitctor);
 
                 if (!type.IsAbstract)
                 {
-                    // generate .ctor(s) calling PHP __construct with optional overloads in case there is an optional parameter
-                    var ps = phpconstruct.Parameters;
-                    for (int i = 0; i < ps.Length; i++)
-                    {
-                        if (ps[i].HasUnmappedDefaultValue())
-                        {
-                            yield return new SynthesizedPhpCtorSymbol(type, phpconstruct.DeclaredAccessibility, fieldsinitctor, phpconstruct, i);
-                        }
-                    }
+                    //// generate .ctor(s) calling PHP __construct with optional overloads in case there is an optional parameter
+                    //var ps = phpconstruct.Parameters;
+                    //for (int i = 0; i < ps.Length; i++)
+                    //{
+                    //    if (ps[i].HasUnmappedDefaultValue())
+                    //    {
+                    //        yield return new SynthesizedPhpCtorSymbol(type, phpconstruct.DeclaredAccessibility, fieldsinitctor, phpconstruct, i);
+                    //    }
+                    //}
 
-                    yield return defaultctor = new SynthesizedPhpCtorSymbol(type, phpconstruct.DeclaredAccessibility, fieldsinitctor, phpconstruct);
+                    ctors.Add(defaultctor = new SynthesizedPhpCtorSymbol(type, phpconstruct.DeclaredAccessibility, fieldsinitctor, phpconstruct));
                 }
             }
 
@@ -226,14 +227,18 @@ namespace Pchp.CodeAnalysis.Symbols
             if (defaultctor != null && defaultctor.DeclaredAccessibility == Accessibility.Public && type.DeclaredAccessibility == Accessibility.Public && !type.IsAbstract)
             {
                 // Template:
+                // [PhpHidden][CompilerGenerated]
                 // void .ctor(...) : this(ContextExtensions.CurrentContext, ...) { }
 
                 // NOTE: overload resolution will prioritize the overload with Context parameter over this one
 
-                yield return new SynthesizedParameterlessPhpCtorSymbol(type, Accessibility.Public, defaultctor);
+                // argless ctor must be first!
+                // used for various dependency-injection situations
+                ctors.Insert(0, new SynthesizedParameterlessPhpCtorSymbol(type, Accessibility.Public, defaultctor));
             }
 
-            yield break;
+            //
+            return ctors.ToImmutable();
         }
 
         static MethodSymbol ResolveBaseCtor(ImmutableArray<ParameterSymbol> givenparams, ImmutableArray<MethodSymbol> candidates)
@@ -357,7 +362,7 @@ namespace Pchp.CodeAnalysis.Symbols
             MethodSymbol defaultctor)
             : base(containingType, accessibility, defaultctor, null)
         {
-            IsPhpHidden = true; // from the PHP context, do not use this Context-less .ctor, we have the Context instance and we want to pass it properly
+            IsPhpHiddenInternal = true; // from the PHP context, do not use this Context-less .ctor, we have the Context instance and we want to pass it properly
         }
 
         protected override IEnumerable<ParameterSymbol> CreateParameters(IEnumerable<ParameterSymbol> baseparams)

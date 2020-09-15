@@ -9,7 +9,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// Represents nodes with character data. No nodes directly correspond to this class, but other nodes do inherit from it.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public partial class DOMCharacterData : DOMNode
     {
         #region Fields and Properties
@@ -49,7 +49,7 @@ namespace Peachpie.Library.XmlDom
         public DOMCharacterData()
         { }
 
-        protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
         {
             return new DOMCharacterData();
         }
@@ -137,7 +137,7 @@ namespace Peachpie.Library.XmlDom
     /// Inherits from <see cref="DOMCharacterData"/> and represents the textual content of a
     /// <see cref="DOMElement"/> or <see cref="DOMAttr"/>. 
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public partial class DOMText : DOMCharacterData
     {
         #region Fields and Properties
@@ -164,10 +164,7 @@ namespace Peachpie.Library.XmlDom
         /// <summary>
         /// Returns &quot;#text&quot;.
         /// </summary>
-        public override string nodeName
-        {
-            get { return "#text"; }
-        }
+        public override string nodeName => "#text";
 
         /// <summary>
         /// Returns or sets the text.
@@ -229,7 +226,7 @@ namespace Peachpie.Library.XmlDom
             return copy;
         }
 
-        protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
         {
             if (IsAssociated) return new DOMText(XmlCharacterData);
             else
@@ -247,7 +244,7 @@ namespace Peachpie.Library.XmlDom
 
         #region Hierarchy
 
-        internal override void Associate(XmlDocument/*!*/ document)
+        internal protected override void Associate(XmlDocument/*!*/ document)
         {
             if (!IsAssociated)
             {
@@ -311,7 +308,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// Inherits from <see cref="DOMText"/> for textural representation of CData constructs. 
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public partial class DOMCdataSection : DOMText
     {
         #region Fields and Properties
@@ -350,7 +347,7 @@ namespace Peachpie.Library.XmlDom
             this.XmlCDataSection = xmlCDataSection;
         }
 
-        protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
         {
             if (IsAssociated) return new DOMCdataSection(XmlCDataSection);
             else
@@ -370,7 +367,7 @@ namespace Peachpie.Library.XmlDom
 
         #region Hierarchy
 
-        internal override void Associate(XmlDocument/*!*/ document)
+        internal protected override void Associate(XmlDocument/*!*/ document)
         {
             if (!IsAssociated)
             {
@@ -384,7 +381,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// Represents comment nodes, characters delimited by <!-- and -->.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public partial class DOMComment : DOMCharacterData
     {
         #region Fields and Properties
@@ -446,7 +443,7 @@ namespace Peachpie.Library.XmlDom
             this.XmlComment = xmlComment;
         }
 
-        protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
         {
             if (IsAssociated) return new DOMComment(XmlComment);
             else
@@ -466,7 +463,7 @@ namespace Peachpie.Library.XmlDom
 
         #region Hierarchy
 
-        internal override void Associate(XmlDocument/*!*/ document)
+        internal protected override void Associate(XmlDocument/*!*/ document)
         {
             if (!IsAssociated)
             {

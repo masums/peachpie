@@ -102,12 +102,9 @@ namespace Pchp.Core.Reflection
             }
 
             var extensions = attr.Extensions;
-            if (extensions != null)
+            for (int i = 0; i < extensions.Length; i++)
             {
-                for (int i = 0; i < extensions.Length; i++)
-                {
-                    EnsureExtensionInfo(extensions[i]).Routines.Add(routine);
-                }
+                EnsureExtensionInfo(extensions[i]).Routines.Add(routine);
             }
         }
 
@@ -115,16 +112,11 @@ namespace Pchp.Core.Reflection
         {
             Debug.Assert(type != null);
 
-            var extensions = type.Extensions;
-            if (extensions != null)
+            var extensionName = type.ExtensionName;
+            if (extensionName != null)
             {
-                for (int i = 0; i < extensions.Length; i++)
-                {
-                    EnsureExtensionInfo(extensions[i]).Types.Add(type);
-                }
+                EnsureExtensionInfo(extensionName).Types.Add(type);
             }
-
-            // CONSIDER: VisitAssembly(type.Type.Assembly);
         }
 
         ExtensionInfo/*!*/EnsureExtensionInfo(string extension)
@@ -163,17 +155,14 @@ namespace Pchp.Core.Reflection
         /// </summary>
         /// <param name="ass">The assembly to be added.</param>
         /// <returns>Value indicating the assembly was visited for the first time.</returns>
-        bool VisitAssembly(Assembly ass)
+        internal bool VisitAssembly(Assembly ass)
         {
             if (_processed.Add(ass))
             {
                 var attrs = ass.GetCustomAttributes<PhpExtensionAttribute>();
-                if (attrs != null)
+                foreach (var attr in attrs)
                 {
-                    foreach (var attr in attrs)
-                    {
-                        VisitAttribute(attr);
-                    }
+                    VisitAttribute(attr);
                 }
 
                 return true;
@@ -192,12 +181,9 @@ namespace Pchp.Core.Reflection
             }
 
             var extensions = attr.Extensions;
-            if (extensions != null)
+            for (int i = 0; i < extensions.Length; i++)
             {
-                for (int i = 0; i < extensions.Length; i++)
-                {
-                    EnsureExtensionInfo(extensions[i]);
-                }
+                EnsureExtensionInfo(extensions[i]);
             }
 
             var registrator = attr.Registrator;

@@ -104,7 +104,7 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             if (this.QualifiedName == new QualifiedName(Devsense.PHP.Syntax.Name.AutoloadName))
             {
-                if (this.DeclaringCompilation.Options.ParseOptions?.LanguageVersion >= new Version(7, 2))
+                if (AnalysisFacts.IsAutoloadDeprecated(this.DeclaringCompilation.Options.LanguageVersion))
                 {
                     // __autoload is deprecated
                     diagnostic.Add(this, _syntax, Errors.ErrorCode.WRN_SymbolDeprecated, string.Empty, this.QualifiedName, Peachpie.CodeAnalysis.Errors.ErrorStrings.AutoloadDeprecatedMessage);
@@ -141,7 +141,7 @@ namespace Pchp.CodeAnalysis.Symbols
             }
         }
 
-        public string PhpName => this.QualifiedName.ToString();
+        public override string RoutineName => this.QualifiedName.ToString();    // __FUNCTION__
 
         public override Symbol ContainingSymbol => _file.SourceModule;
 
@@ -170,13 +170,5 @@ namespace Pchp.CodeAnalysis.Symbols
         public override bool IsStatic => true;
 
         public override bool IsVirtual => false;
-
-        public override ImmutableArray<Location> Locations
-        {
-            get
-            {
-                return ImmutableArray.Create(Location.Create(ContainingFile.SyntaxTree, _syntax.Span.ToTextSpan()));
-            }
-        }
     }
 }

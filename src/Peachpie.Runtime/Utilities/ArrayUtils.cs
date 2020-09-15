@@ -114,11 +114,11 @@ namespace Pchp.Core.Utilities
         public static void Fill(byte[] array, byte value, int offset, int count)
         {
             if (array == null)
-                throw new ArgumentNullException("array");
+                throw new ArgumentNullException(nameof(array));
             if (offset < 0 || offset + count > array.Length)
-                throw new ArgumentOutOfRangeException("offset");
+                throw new ArgumentOutOfRangeException(nameof(offset));
             if (count < 0)
-                throw new ArgumentOutOfRangeException("length");
+                throw new ArgumentOutOfRangeException(nameof(count));
             if (array.Length == 0)
                 return;
 
@@ -177,12 +177,79 @@ namespace Pchp.Core.Utilities
         /// Searches for the specified object and returns the index of its first occurrence in a one-dimensional array.
         /// </summary>
         public static int IndexOf<T>(this T[] arr, T value) => Array.IndexOf(arr, value);
+
+        /// <summary>
+        /// Safely returns item from array.
+        /// </summary>
+        public static bool TryGetItem<T>(T[] array, int idx, out T value)
+        {
+            if (idx >= 0 && idx < array.Length)
+            {
+                value = array[idx];
+                return true;
+            }
+            else
+            {
+                value = default;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Safely returns item from array.
+        /// </summary>
+        public static bool TryGetItem<T>(T[] array, long idx, out T value)
+        {
+            if (idx >= 0 && idx < array.LongLength)
+            {
+                value = array[idx];
+                return true;
+            }
+            else
+            {
+                value = default;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Creates new array with reversed order of items.
+        /// </summary>
+        public static T[] Reverse<T>(this T[] array)
+        {
+            if (array == null) throw new ArgumentNullException(nameof(array));
+
+            if (array.Length == 0) return Array.Empty<T>();
+
+            var reversed = new T[array.Length];
+
+            Array.Copy(array, reversed, array.Length);
+            Array.Reverse(reversed);
+
+            return reversed;
+        }
+
+        /// <summary>
+        /// Gets value indicating the array is null or with no elements.
+        /// </summary>
+        public static bool IsNullOrEmpty<T>(T[] array) => array == null || array.Length == 0;
+    }
+
+    /// <summary>
+    /// Helper class holding instance of an empty dictionary.
+    /// </summary>
+    public sealed class EmptyDictionary<TKey, TValue>
+    {
+        /// <summary>
+        /// The singleton.
+        /// </summary>
+        public static IReadOnlyDictionary<TKey, TValue> Singleton { get; } = new System.Collections.ObjectModel.ReadOnlyDictionary<TKey, TValue>(new Dictionary<TKey, TValue>(0));
     }
 
     /// <summary>
     /// Helper class that implements empty collection and empty enumerator, GC friendly.
     /// </summary>
-    public sealed class EmptyCollection<T> : IEnumerable<T>, ICollection<T>
+    public sealed class EmptyCollection<T> : ICollection<T>
     {
         public static readonly EmptyCollection<T> Instance = new EmptyCollection<T>();
 

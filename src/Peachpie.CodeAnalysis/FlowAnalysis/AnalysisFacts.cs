@@ -14,6 +14,57 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
 {
     static class AnalysisFacts
     {
+        public static bool IsAutoloadDeprecated(Version langVersion)
+        {
+            // >= 7.2
+            return langVersion != null && langVersion.Major > 7 || (langVersion.Major == 7 && langVersion.Minor >= 2);
+        }
+
+        public static bool IsStringableSupported(PhpCompilation compilation)
+        {
+            // >= 8.0
+            return
+                compilation.CoreTypes.Stringable.Symbol is PENamedTypeSymbol pe &&
+                pe.TryGetPhpTypeAttribute(out _, out var minLangVersion) &&
+                minLangVersion != null &&
+                compilation.Options.LanguageVersion >= minLangVersion;
+
+            //var langVersion = compilation.Options.LanguageVersion;
+            //return langVersion != null && langVersion.Major >= 8;
+        }
+
+        /// <summary>
+        /// Determines if given global function symbol is unconditionally declared (always declared).
+        /// </summary>
+        static bool IsUnconditionalDeclaration(IPhpRoutineSymbol symbol)
+        {
+            // method declaration in a referenced assembly,
+            // not within a compiled source script:
+            if (symbol is PEMethodSymbol method)
+            {
+                var container = method.ContainingType;
+                return container != null && !container.IsPhpSourceFile();   // only functions declared in libraries, not in PHP source file
+            }
+
+            // Ambiguity,
+            // only if all possible symbols are unconditionally declared.
+            if (symbol is AmbiguousMethodSymbol ambiguous)
+            {
+                foreach (var a in ambiguous.Ambiguities)
+                {
+                    if (!IsUnconditionalDeclaration(a))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            //
+            return false;
+        }
+
         /// <summary>
         /// Resolves value of the function call in compile time if possible and updates the variable type if necessary
         /// </summary>
@@ -38,7 +89,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
             if (call.ArgumentsInSourceOrder.All(a => a.Value.ConstantValue.HasValue))
             {
                 // Clear out the constant value result from the previous run of this method (if it was valid, it will be reassigned below)
-                call.ConstantValue = default(Optional<object>);
+                call.ConstantValue = default;
 
                 string str;
 
@@ -50,14 +101,9 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                         if (args.Length == 1 && args[0].Value.ConstantValue.TryConvertToString(out str))
                         {
                             // TRUE <=> function is defined unconditionally in a reference library (PE assembly)
-                            var tmp = analysis.Model.ResolveFunction(NameUtils.MakeQualifiedName(str, true));
-                            if (tmp is PEMethodSymbol || (tmp is AmbiguousMethodSymbol && ((AmbiguousMethodSymbol)tmp).Ambiguities.All(f => f is PEMethodSymbol)))  // TODO: unconditional declaration ?
+                            if (IsUnconditionalDeclaration(analysis.Model.ResolveFunction(NameUtils.MakeQualifiedName(str, true))))
                             {
-                                if (!tmp.ContainingType.IsPhpSourceFile()) // only functions declared in libraries, not in PHP source file
-                                {
-                                    call.ConstantValue = ConstantValueExtensions.AsOptional(true);
-                                    return;
-                                }
+                                call.ConstantValue = ConstantValueExtensions.AsOptional(true);
                             }
                         }
                         break;
@@ -69,8 +115,8 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                         {
                             // TRUE <=> class is defined unconditionally in a reference library (PE assembly)
                             var class_name = args[0].Value.ConstantValue.Value as string;
-                            if (class_name != null)
-                            {
+                            if (!string.IsNullOrEmpty(class_name))
+                                {
                                 var tmp = (TypeSymbol)analysis.Model.ResolveType(NameUtils.MakeQualifiedName(class_name, true));
                                 if (tmp is PENamedTypeSymbol && !tmp.IsPhpUserType())   // TODO: + SourceTypeSymbol when reachable unconditional declaration
                                 {
@@ -92,12 +138,11 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                             if (class_name != null && args[1].Value.ConstantValue.TryConvertToString(out str))
                             {
                                 var tmp = (NamedTypeSymbol)analysis.Model.ResolveType(NameUtils.MakeQualifiedName(class_name, true));
-                                if (tmp is PENamedTypeSymbol)
+                                if (tmp is PENamedTypeSymbol && !tmp.IsPhpUserType())
                                 {
                                     if (tmp.LookupMethods(str).Any())
                                     {
                                         call.ConstantValue = ConstantValueExtensions.AsOptional(true);
-                                        return;
                                     }
                                 }
                             }
@@ -120,10 +165,8 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                                 {
                                     var cvalue = fld.GetConstantValue(false);
                                     call.ConstantValue = (cvalue != null) ? new Optional<object>(cvalue.Value) : null;
-                                    call.TypeRefMask = TypeRefFactory.CreateMask(analysis.TypeCtx, fld.Type, notNull: fld.HasNotNullAttribute());
+                                    call.TypeRefMask = TypeRefFactory.CreateMask(analysis.TypeCtx, fld.Type, notNull: fld.IsNotNull());
                                 }
-
-                                return;
                             }
                             else if (tmp is PEPropertySymbol prop)
                             {
@@ -133,7 +176,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                                 }
                                 else // name == "constant"
                                 {
-                                    call.TypeRefMask = TypeRefFactory.CreateMask(analysis.TypeCtx, prop.Type, notNull: prop.HasNotNullAttribute());
+                                    call.TypeRefMask = TypeRefFactory.CreateMask(analysis.TypeCtx, prop.Type, notNull: prop.IsNotNull());
                                 }
                             }
                         }
@@ -144,7 +187,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                         {
                             call.ConstantValue = new Optional<object>(value.Length);
                         }
-                        return;
+                        break;
                 }
             }
         }
@@ -284,9 +327,9 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                         arg,
                         currentType =>
                         {
-                            // Closure is specified in both branches
-                            TypeRefMask targetType = 0;
-                            AddTypeIfInContext(typeCtx, type => type.IsLambda, false, ref targetType);
+                            // Closure and lambdas are specified in both branches
+                            TypeRefMask targetType = typeCtx.GetClosureTypeMask();
+                            targetType |= typeCtx.GetLambdasFromMask(currentType);
 
                             if (branch == ConditionBranch.ToTrue)
                             {
@@ -300,7 +343,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                             }
                             else
                             {
-                                // For closure, is_callable always returns true -> remove the closure type from false branch,
+                                // For closure and lambdas, is_callable always returns true -> remove them from false branch,
                                 // don't remove IncludeSubclasses flag
                                 return targetType;
                             }
@@ -318,23 +361,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                 default:
                     return false;
             }
-        }
-
-        private static void AddTypeIfInContext(
-            TypeRefContext typeCtx,
-            Func<IBoundTypeRef, bool> selector,
-            bool includeSubclasses,
-            ref TypeRefMask mask)
-        {
-            //
-            var closureTypeRef = typeCtx.Types.FirstOrDefault(selector);
-            if (closureTypeRef != null)
-            {
-                mask |= closureTypeRef.GetTypeRefMask(typeCtx);
-            }
-
-            //
-            mask.IncludesSubclasses = includeSubclasses;
         }
 
         /// <summary>
@@ -528,6 +554,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis
                     case PhpTypeCode.String:
                     case PhpTypeCode.WritableString:
                     case PhpTypeCode.Null:
+                    case PhpTypeCode.Mixed:
                         return true;
                 }
             }

@@ -1,10 +1,13 @@
 ﻿using Pchp.Core;
+using Pchp.Core.Utilities;
 using Pchp.Library.Streams;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 /* TODO:
@@ -32,6 +35,7 @@ namespace Pchp.Library.Streams
     /// <summary>
     /// Class containing implementations of PHP functions accessing the <see cref="StreamContext"/>s.
     /// </summary>
+    [PhpExtension("standard")]
     public static class PhpContexts
     {
         #region stream_context_create
@@ -240,7 +244,8 @@ namespace Pchp.Library.Streams
     /// <summary>
 	/// Gives access to the stream filter chains.
 	/// </summary>
-	public static class PhpFilters
+    [PhpExtension("standard")]
+    public static class PhpFilters
     {
         #region Enums & Constants
 
@@ -313,16 +318,29 @@ namespace Pchp.Library.Streams
 
         #endregion
 
-        #region stream_filter_append, stream_filter_prepend
+        #region stream_filter_append, stream_filter_prepend, stream_filter_remove
 
-        /// <summary>Adds filtername to the list of filters attached to stream.</summary>
-        /// <param name="ctx">Runtime context.</param>
-        /// <param name="stream"></param>
-        /// <param name="filter"></param>
-        /// <param name="read_write">Combination of the <see cref="FilterChainOptions"/> flags.</param>
-        public static bool stream_filter_append(Context ctx, PhpResource stream, string filter, FilterChainOptions read_write = FilterChainOptions.ReadWrite)
+        sealed class StreamFilterResource : PhpResource
         {
-            return stream_filter_append(ctx, stream, filter, read_write, PhpValue.Null);
+            internal PhpStream Stream { get; private set; }
+            internal PhpFilter WriteFilter { get; private set; }
+            internal PhpFilter ReadFilter { get; private set; }
+
+            public StreamFilterResource(PhpStream stream, PhpFilter writeFilter, PhpFilter readFilter) : base("stream filter")
+            {
+                this.Stream = stream;
+                this.WriteFilter = writeFilter;
+                this.ReadFilter = readFilter;
+            }
+
+            protected override void FreeManaged()
+            {
+                Stream = null;
+                WriteFilter = null;
+                ReadFilter = null;
+
+                base.FreeManaged();
+            }
         }
 
         /// <summary>Adds filtername to the list of filters attached to stream.</summary>
@@ -331,23 +349,24 @@ namespace Pchp.Library.Streams
         /// <param name="filter">The filter name.</param>
         /// <param name="read_write">Combination of the <see cref="FilterChainOptions"/> flags.</param>
         /// <param name="parameters">Additional parameters for a user filter.</param>
-        public static bool stream_filter_append(Context ctx, PhpResource stream, string filter, FilterChainOptions read_write, PhpValue parameters)
+        [return: CastToFalse]
+        public static PhpResource stream_filter_append(Context ctx, PhpResource stream, string filter, FilterChainOptions read_write = FilterChainOptions.ReadWrite, PhpValue parameters = default)
         {
             PhpStream s = PhpStream.GetValid(stream);
-            if (s == null) return false;
+            if (s == null) return null; // false;
 
-            var where = (FilterChainOptions)read_write & FilterChainOptions.ReadWrite;
-            return PhpFilter.AddToStream(ctx, s, filter, where | FilterChainOptions.Tail, parameters);
-        }
+            var where = read_write & FilterChainOptions.ReadWrite;
+            var added = PhpFilter.AddToStream(ctx, s, filter, where | FilterChainOptions.Tail, parameters);
 
-        /// <summary>Adds <paramref name="filter"/> to the list of filters attached to <paramref name="stream"/>.</summary>
-        /// <param name="ctx">Runtime context.</param>
-        /// <param name="stream">The target stream.</param>
-        /// <param name="filter">The filter name.</param>
-        /// <param name="read_write">Combination of the <see cref="FilterChainOptions"/> flags.</param>
-        public static bool stream_filter_prepend(Context ctx, PhpResource stream, string filter, FilterChainOptions read_write = FilterChainOptions.ReadWrite)
-        {
-            return stream_filter_prepend(ctx, stream, filter, read_write, PhpValue.Null);
+            //
+            if (added.readFilter != null || added.writeFilter != null)
+            {
+                return new StreamFilterResource(s, added.writeFilter, added.readFilter);
+            }
+            else
+            {
+                return null; // false
+            }
         }
 
         /// <summary>Adds <paramref name="filter"/> to the list of filters attached to <paramref name="stream"/>.</summary>
@@ -356,13 +375,58 @@ namespace Pchp.Library.Streams
         /// <param name="filter">The filter name.</param>
         /// <param name="read_write">Combination of the <see cref="FilterChainOptions"/> flags.</param>
         /// <param name="parameters">Additional parameters for a user filter.</param>
-        public static bool stream_filter_prepend(Context ctx, PhpResource stream, string filter, FilterChainOptions read_write, PhpValue parameters)
+        [return: CastToFalse]
+        public static PhpResource stream_filter_prepend(Context ctx, PhpResource stream, string filter, FilterChainOptions read_write = FilterChainOptions.ReadWrite, PhpValue parameters = default)
         {
             var s = PhpStream.GetValid(stream);
-            if (s == null) return false;
+            if (s == null) return null; // false;
 
-            var where = (FilterChainOptions)read_write & FilterChainOptions.ReadWrite;
-            return PhpFilter.AddToStream(ctx, s, filter, where | FilterChainOptions.Head, parameters);
+            var where = read_write & FilterChainOptions.ReadWrite;
+            var added = PhpFilter.AddToStream(ctx, s, filter, where | FilterChainOptions.Head, parameters);
+
+            //
+            if (added.readFilter != null || added.writeFilter != null)
+            {
+                return new StreamFilterResource(s, added.writeFilter, added.readFilter);
+            }
+            else
+            {
+                return null; // false
+            }
+        }
+
+        /// <summary>
+        /// Removes a stream filter previously added to a stream with stream_filter_prepend() or stream_filter_append().
+        /// Any data remaining in the filter's internal buffer will be flushed through to the next filter before removing it.
+        /// </summary>
+        public static bool stream_filter_remove(PhpResource stream_filter)
+        {
+            bool removed = false;
+
+            if (stream_filter is StreamFilterResource s && s.IsValid && s.Stream != null && s.Stream.IsValid)
+            {
+                s.Stream.Flush();
+
+                if (s.WriteFilter != null)
+                {
+                    removed |= s.Stream.RemoveFilter(s.WriteFilter, FilterChainOptions.Write);
+                }
+
+                if (s.ReadFilter != null)
+                {
+                    removed |= s.Stream.RemoveFilter(s.ReadFilter, FilterChainOptions.Read);
+                }
+
+                s.Dispose();
+            }
+            else
+            {
+                // Invalid resource given, not a stream filter
+                PhpException.Throw(PhpError.Warning, Core.Resources.ErrResources.invalid_stream_resource);
+            }
+
+            //
+            return removed;
         }
 
         #endregion
@@ -458,7 +522,8 @@ namespace Pchp.Library.Streams
 	/// Class containing implementations of PHP functions accessing the <see cref="StreamWrapper"/>s.
 	/// </summary>
 	/// <threadsafety static="true"/>
-	public static class PhpWrappers
+    [PhpExtension("Core")]
+    public static class PhpWrappers
     {
         #region stream_wrapper_register, stream_register_wrapper, stream_get_wrappers
 
@@ -548,6 +613,7 @@ namespace Pchp.Library.Streams
         #endregion
     }
 
+    [PhpExtension("standard")]
     public static class PhpStreams
     {
         #region Enums & Constants
@@ -560,9 +626,9 @@ namespace Pchp.Library.Streams
         {
             /// <summary>Seek from the beginning of the file.</summary>
             Set = SeekOrigin.Begin,   // 0 (OK)
-                                      /// <summary>Seek from the current position.</summary>
+            /// <summary>Seek from the current position.</summary>
             Current = SeekOrigin.Current, // 1 (OK)
-                                          /// <summary>Seek from the end of the file.</summary>
+            /// <summary>Seek from the end of the file.</summary>
             End = SeekOrigin.End      // 2 (OK)
         }
 
@@ -865,7 +931,7 @@ namespace Pchp.Library.Streams
         {
             var array = new PhpArray();
 
-            foreach (PhpFilter f in stream.StreamFilters)
+            foreach (var f in stream.StreamFilters)
             {
                 array.Add(f.filtername);
             }
@@ -949,57 +1015,115 @@ namespace Pchp.Library.Streams
 
         #region stream_select
 
-        /// <summary>Runs the equivalent of the select() system call on the given arrays of streams with a timeout specified by tv_sec and tv_usec </summary>   
+        /// <summary>Runs the equivalent of the select() system call on the given arrays of streams with a timeout specified by <paramref name="tv_sec"/> and <paramref name="tv_usec"/>.
+        /// </summary>   
 		public static int stream_select(ref PhpArray read, ref PhpArray write, ref PhpArray except, int tv_sec, int tv_usec = 0)
         {
-            //if ((read == null || read.Count == 0) && (write == null || write.Count == 0))
-            //    return except == null ? 0 : except.Count;
+            if ((read == null || read.Count == 0) &&
+                (write == null || write.Count == 0))
+            {
+                // nothing to select:
+                return except == null ? 0 : except.Count;
+            }
 
-            //var readResult = new PhpArray();
-            //var writeResult = new PhpArray();
-            //var i = 0;
-            //var timer = Stopwatch.StartNew();
-            //var waitTime = tv_sec * 1000 + tv_usec;
-            //while (true)
-            //{
-            //    if (read != null)
-            //    {
-            //        readResult.Clear();
-            //        foreach (var item in read)
-            //        {
-            //            var stream = item.Value as PhpStream;
-            //            if (stream == null)
-            //                continue;
-            //            if (stream.CanReadWithoutLock())
-            //                readResult.Add(item.Key, item.Value);
-            //        }
-            //    }
-            //    if (write != null)
-            //    {
-            //        writeResult.Clear();
-            //        foreach (var item in write)
-            //        {
-            //            var stream = item.Value as PhpStream;
-            //            if (stream == null)
-            //                continue;
-            //            if (stream.CanWriteWithoutLock())
-            //                writeResult.Add(item.Key, item.Value);
-            //        }
-            //    }
-            //    if (readResult.Count > 0 || writeResult.Count > 0 || except.Count > 0)
-            //        break;
-            //    i++;
-            //    if (timer.ElapsedMilliseconds > waitTime)
-            //        break;
-            //    if (i < 10)
-            //        Thread.Yield();
-            //    else
-            //        Thread.Sleep(Math.Min(i, waitTime));
-            //}
-            //read = readResult;
-            //write = writeResult;
-            //return read.Count + write.Count + (except == null ? 0 : except.Count);
-            throw new NotImplementedException();
+            //
+            var startTime = System.DateTime.UtcNow;
+            int wait_ms = (tv_sec >= 0 || tv_usec > 0) ? (tv_sec * 1_000 + tv_usec / 1_000) : -1;
+
+            //
+            var readcheck = read != null ? new PhpArray() : null;
+            var writecheck = write != null ? new PhpArray() : null;
+            var errcheck = except != null ? new PhpArray() : null;
+
+            for (int i = 0; ; i++)
+            {
+                int count = 0;
+
+                //
+                if (read != null && read.Count != 0)
+                {
+                    foreach (var item in read.Values)
+                    {
+                        if (item.AsObject() is PhpStream stream && stream.CanReadWithoutLock)
+                        {
+                            readcheck.Add(item);
+                        }
+                    }
+
+                    count += readcheck.Count;
+                }
+
+                if (write != null && write.Count != 0)
+                {
+                    foreach (var item in write.Values)
+                    {
+                        if (item.AsObject() is PhpStream stream && stream.CanWriteWithoutLock)
+                        {
+                            writecheck.Add(item);
+                        }
+                    }
+
+                    count += writecheck.Count;
+                }
+
+                if (except != null && except.Count != 0)
+                {
+                    // watch for high priority exceptional ("out-of-band") data arriving
+                    // NOTICE: only for SocketStream
+
+                    var list = new List<Socket>(except.Count);
+
+                    foreach (var item in except.Values)
+                    {
+                        if (item.AsObject() is SocketStream ss && ss.IsValid)
+                        {
+                            list.Add(ss.Socket);
+                        }
+                    }
+
+                    try
+                    {
+                        Socket.Select(null, null, list, wait_ms * 1_000);
+                    }
+                    catch (SocketException ex)
+                    {
+                        PhpException.Throw(PhpError.Warning, ex.Message);
+                    }
+
+                    if (list.Count != 0)
+                    {
+                        foreach (var item in except.Values)
+                        {
+                            if (item.AsObject() is SocketStream ss && list.Contains(ss.Socket))
+                            {
+                                errcheck.Add(PhpValue.FromClass(ss));
+                            }
+                        }
+
+                        count += errcheck.Count;
+                    }
+                }
+
+                // check stream available or timeout
+                if (count != 0 || (wait_ms > 0 && (System.DateTime.UtcNow - startTime).TotalMilliseconds >= wait_ms))
+                {
+                    // update ref parameters and return:
+                    read = readcheck;
+                    write = writecheck;
+                    except = errcheck;
+
+                    //
+                    return count;
+                }
+
+                // avoids polling CPU without a break:
+                if (i < 8)
+                    // just spin
+                    Thread.Yield();
+                else
+                    // sleep the thread for [2..100] ms
+                    Thread.Sleep(Math.Min(Math.Min((i + 1) * 2, 100), wait_ms));
+            }
         }
 
         #endregion
@@ -1045,6 +1169,83 @@ namespace Pchp.Library.Streams
             string scheme = PhpStream.GetSchemeInternal(url, out var _);
             var wrapper = StreamWrapper.GetWrapperInternal(ctx, scheme);
             return !wrapper?.IsUrl ?? false;
+        }
+
+        #endregion
+
+        #region stream_isatty
+
+        /// <summary>
+        /// Determines if <paramref name="stream"/> refers to a valid terminal type device.
+        /// </summary>
+        /// <param name="stream">Stream resource. If <c>null</c> or not a stream resource, warning is thrown and function returns <c>false</c>.</param>
+        public static bool stream_isatty(PhpResource stream)
+        {
+            var s = PhpStream.GetValid(stream);
+            if (s != null)
+            {
+                if (InputOutputStreamWrapper.IsStdIn(s)) return !Console.IsInputRedirected; // -10
+                if (InputOutputStreamWrapper.IsStdOut(s)) return !Console.IsOutputRedirected;// -11
+                if (InputOutputStreamWrapper.IsStdErr(s)) return !Console.IsErrorRedirected; // -12
+            }
+
+            return false;
+        }
+
+        #endregion
+
+        #region sapi_windows_vt100_support
+
+        /// <summary>
+        /// Resolves one of if possible
+        /// <see cref="WindowsPlatform.STD_ERROR_HANDLE"/>,
+        /// <see cref="WindowsPlatform.STD_OUTPUT_HANDLE"/>,
+        /// <see cref="WindowsPlatform.STD_INPUT_HANDLE"/>.
+        /// </summary>
+        static bool TryResolveWindowsIoStdHandle(PhpResource stream, out int handle)
+        {
+            if (CurrentPlatform.IsWindows)
+            {
+                var s = PhpStream.GetValid(stream);
+                if (s != null)
+                {
+                    if (InputOutputStreamWrapper.IsStdIn(s))
+                    {
+                        handle = WindowsPlatform.STD_INPUT_HANDLE;
+                        return true;
+                    }
+
+                    if (InputOutputStreamWrapper.IsStdOut(s))
+                    {
+                        handle = WindowsPlatform.STD_OUTPUT_HANDLE;
+                        return true;
+                    }
+
+                    if (InputOutputStreamWrapper.IsStdErr(s))
+                    {
+                        handle = WindowsPlatform.STD_ERROR_HANDLE;
+                        return true;
+                    }
+                }
+            }
+
+            handle = 0;
+            return false;
+        }
+
+        public static bool sapi_windows_vt100_support(PhpResource stream)
+        {
+            return TryResolveWindowsIoStdHandle(stream, out var handle) && WindowsPlatform.Has_VT100(handle);
+        }
+
+        public static bool sapi_windows_vt100_support(PhpResource stream, bool enable)
+        {
+            if (TryResolveWindowsIoStdHandle(stream, out var handle))
+            {
+                return WindowsPlatform.Enable_VT100(handle, enable);
+            }
+
+            return false;
         }
 
         #endregion

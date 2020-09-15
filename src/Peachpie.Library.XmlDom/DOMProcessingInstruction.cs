@@ -6,7 +6,7 @@ using Pchp.Core;
 
 namespace Peachpie.Library.XmlDom
 {
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public class DOMProcessingInstruction : DOMNode
     {
 		#region Fields and Properties
@@ -83,7 +83,7 @@ namespace Peachpie.Library.XmlDom
 			this.XmlProcessingInstruction = xmlProcessingInstruction;
 		}
 
-		protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
 		{
 			if (IsAssociated) return new DOMProcessingInstruction(XmlProcessingInstruction);
 			else

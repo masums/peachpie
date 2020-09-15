@@ -11,6 +11,7 @@ using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 using Pchp.CodeAnalysis;
 using Pchp.Core;
+using Pchp.Core.Utilities;
 
 namespace Peachpie.Library.Scripting
 {
@@ -162,6 +163,20 @@ namespace Peachpie.Library.Scripting
                 : Array.Empty<Script>();
         }
 
+        static string BuildSubmissionFileName(string referrer, string evalname)
+        {
+            // build a non-existing file path for the submission code (i.e. eval) being invoked from within a source code (referrer)
+
+            // embedded code file and file paths in general do not like some special characters,
+            // get rid of them:
+            return $"{referrer}.{evalname}.php"
+                .Replace("<", "")
+                .Replace(">", "")
+                .Replace("`", "")
+                .Replace("~", "")
+                ;
+        }
+
         /// <summary>
         /// Compiles <paramref name="code"/> and creates script.
         /// </summary>
@@ -173,34 +188,48 @@ namespace Peachpie.Library.Scripting
         public static Script Create(Context.ScriptOptions options, string code, PhpCompilationFactory builder, IEnumerable<Script> previousSubmissions)
         {
             // use the language version of the requesting context
-            Version languageVersion = null;
+            Version languageVersion = options.LanguageVersion;
             bool shortOpenTags = false;
 
-            var language = options.Context.TargetPhpLanguage;
-            if (language != null)
+            if (languageVersion == null)
             {
-                shortOpenTags = language.ShortOpenTag;
-                Version.TryParse(language.LanguageVersion, out languageVersion);
+                var language = options.Context.TargetPhpLanguage;
+                if (language != null)
+                {
+                    shortOpenTags = language.ShortOpenTag;
+                    Version.TryParse(language.LanguageVersion, out languageVersion);
+                }
+            }
+
+            // unique in-memory assembly name
+            var name = builder.GetNewSubmissionName();
+
+            // submission do not have the opening "<?php" script tag:
+            var kind = options.IsSubmission ? SourceCodeKind.Script : SourceCodeKind.Regular;
+
+            if (kind == SourceCodeKind.Script && options.EmitDebugInformation)
+            {
+                // since submission do not have the opening "<?php" tag,
+                // add a comment with the opening tag, so source code editors don't get confused and colorize the code properly:
+                code = $"#<?php\n{code}";
             }
 
             // parse the source code
             var tree = PhpSyntaxTree.ParseCode(
-                SourceText.From(code, Encoding.UTF8),
+                SourceText.From(code, Encoding.UTF8, SourceHashAlgorithm.Sha256),
                 new PhpParseOptions(
-                    kind: options.IsSubmission ? SourceCodeKind.Script : SourceCodeKind.Regular,
+                    kind: kind,
                     languageVersion: languageVersion,
                     shortOpenTags: shortOpenTags),
                 PhpParseOptions.Default,
-                options.Location.Path);
+                options.IsSubmission ? BuildSubmissionFileName(options.Location.Path, name.Name) : options.Location.Path
+            );
 
             var diagnostics = tree.Diagnostics;
             if (!HasErrors(diagnostics))
             {
                 // TODO: collect required types from {tree}, remember as a script dependencies
                 // TODO: perform class autoload (now before compilation, and then always before invocation)
-
-                // unique in-memory assembly name
-                var name = builder.GetNewSubmissionName();
 
                 // list of scripts that were eval'ed in the context already,
                 // our compilation may depend on them
@@ -218,6 +247,7 @@ namespace Peachpie.Library.Scripting
                 // create the compilation object
                 // TODO: add conditionally declared types into the compilation tables
                 var compilation = (PhpCompilation)builder.CoreCompilation
+                    .WithLangVersion(languageVersion)
                     .WithAssemblyName(name.Name)
                     .AddSyntaxTrees(tree)
                     .AddReferences(metadatareferences);
@@ -228,8 +258,12 @@ namespace Peachpie.Library.Scripting
                 if (options.EmitDebugInformation)
                 {
                     compilation = compilation.WithPhpOptions(compilation.Options.WithOptimizationLevel(OptimizationLevel.Debug).WithDebugPlusMode(true));
-                    //emitOptions = emitOptions.WithDebugInformationFormat(DebugInformationFormat.PortablePdb);
-                    //embeddedTexts = new[] { EmbeddedText.FromSource(tree.FilePath, tree.GetText()) };
+
+                    if (options.IsSubmission)
+                    {
+                        emitOptions = emitOptions.WithDebugInformationFormat(DebugInformationFormat.PortablePdb);
+                        embeddedTexts = new[] { EmbeddedText.FromSource(tree.FilePath, tree.GetText()) };
+                    }
                 }
                 else
                 {
@@ -250,6 +284,14 @@ namespace Peachpie.Library.Scripting
 
                     if (result.Success)
                     {
+                        //if (pdbStream != null)
+                        //{
+                        //    // DEBUG DUMP
+                        //    var fname = @"C:\Users\jmise\OneDrive\Desktop\" + Path.GetFileNameWithoutExtension(tree.FilePath);
+                        //    File.WriteAllBytes(fname + ".dll", peStream.ToArray());
+                        //    File.WriteAllBytes(fname + ".pdb", pdbStream.ToArray());
+                        //}
+
                         return new Script(name, peStream, pdbStream, builder, previousSubmissions);
                     }
                     else
@@ -272,10 +314,12 @@ namespace Peachpie.Library.Scripting
 
             return new Script((ctx, locals, @this, self) =>
             {
+                // TODO: throw new \ParseError( ... )
+
                 PhpException.Throw(PhpError.Error, string.Format("The script cannot be compiled due to following errors:\n{0}", errors));
 
                 //
-                return PhpValue.Void;
+                return PhpValue.False;
             });
         }
 

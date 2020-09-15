@@ -3,11 +3,14 @@ using Devsense.PHP.Syntax.Ast;
 using Microsoft.CodeAnalysis;
 using Pchp.CodeAnalysis.FlowAnalysis;
 using Pchp.CodeAnalysis.Semantics;
+using Peachpie.CodeAnalysis.Symbols;
 using Roslyn.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace Pchp.CodeAnalysis.Symbols
@@ -133,7 +136,7 @@ namespace Pchp.CodeAnalysis.Symbols
             {
                 t = ((PropertySymbol)symbol).Type;
             }
-            else if (symbol is ParameterSymbol ps)
+            else if (symbol is SourceParameterSymbol ps)
             {
                 t = ps.Type;
 
@@ -142,6 +145,17 @@ namespace Pchp.CodeAnalysis.Symbols
                     Debug.Assert(t.IsSZArray());
                     return ctx.GetArrayTypeMask(TypeRefFactory.CreateMask(ctx, ((ArrayTypeSymbol)t).ElementType));
                 }
+                else if (ps.Syntax.TypeHint.IsCallable())
+                {
+                    var callableMask = ctx.GetCallableTypeMask();
+                    callableMask.IsRef = ps.Syntax.PassedByRef;
+                    if (!ps.HasNotNull)
+                        callableMask |= ctx.GetNullTypeMask();
+
+                    return callableMask;
+                }
+
+                // TODO: handle union types precisely, now we resolve them mostly as PhpValue which results in AnyType mask
             }
             else
             {
@@ -149,7 +163,7 @@ namespace Pchp.CodeAnalysis.Symbols
             }
 
             // create the type mask from the CLR type symbol
-            var mask = TypeRefFactory.CreateMask(ctx, t, notNull: (symbol as Symbol).HasNotNullAttribute());
+            var mask = TypeRefFactory.CreateMask(ctx, t, notNull: (symbol as Symbol).IsNotNull());
 
             if (symbol is IPhpRoutineSymbol phpr)
             {
@@ -194,10 +208,10 @@ namespace Pchp.CodeAnalysis.Symbols
                 //
                 var phpparam = new PhpParam(
                     index++,
-                    TypeRefFactory.CreateMask(ctx, p.Type, notNull: p.HasNotNullAttribute()),
+                    TypeRefFactory.CreateMask(ctx, p.Type, notNull: p.HasNotNull),
                     p.RefKind != RefKind.None,
                     p.IsParams,
-                    isPhpRw: p.GetPhpRwAttribute() != null,
+                    isPhpRw: p.IsPhpRw,
                     defaultValue: p.Initializer);
 
                 if (result == null)
@@ -254,28 +268,24 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         public static RoutineFlags InvocationFlags(this IPhpRoutineSymbol routine)
         {
-            RoutineFlags f = RoutineFlags.None;
+            var f = RoutineFlags.None;
 
-            var ps = routine.Parameters;
+            var ps = /*routine is SourceRoutineSymbol sr ? sr.ImplicitParameters :*/ routine.Parameters;
             foreach (var p in ps)
             {
                 if (p.IsImplicitlyDeclared)
                 {
-                    if (SpecialParameterSymbol.IsQueryValueParameter(p, out var ctor, out var container))
+                    switch (((ParameterSymbol)p).ImportValueAttributeData.Value)
                     {
-                        switch (container)
-                        {
-                            case SpecialParameterSymbol.QueryValueTypes.CallerArgs:
-                                f |= RoutineFlags.UsesArgs;
-                                break;
-                            case SpecialParameterSymbol.QueryValueTypes.LocalVariables:
-                                f |= RoutineFlags.UsesLocals;
-                                break;
-                        }
-                    }
-                    else if (SpecialParameterSymbol.IsCallerStaticClassParameter(p))
-                    {
-                        f |= RoutineFlags.UsesLateStatic;
+                        case ImportValueAttributeData.ValueSpec.CallerArgs:
+                            f |= RoutineFlags.UsesArgs;
+                            break;
+                        case ImportValueAttributeData.ValueSpec.Locals:
+                            f |= RoutineFlags.UsesLocals;
+                            break;
+                        case ImportValueAttributeData.ValueSpec.CallerStaticClass:
+                            f |= RoutineFlags.UsesLateStatic;
+                            break;
                     }
                 }
                 else
@@ -286,6 +296,48 @@ namespace Pchp.CodeAnalysis.Symbols
             }
 
             return f;
+        }
+
+        /// <summary>
+        /// Determines if the given routine uses late static binding i.e. `static` keyword or it forwards the late static type.
+        /// </summary>
+        internal static bool HasLateStaticBoundParam(this MethodSymbol method)
+        {
+            if (method.IsErrorMethodOrNull() || !method.IsStatic)
+            {
+                return false;
+            }
+
+            if (method.OriginalDefinition is SourceRoutineSymbol sr)
+            {
+                return sr.RequiresLateStaticBoundParam;
+            }
+
+            // PE method
+            return method.LateStaticParameter() != null;
+        }
+
+        /// <summary>
+        /// Gets the special <c>&lt;static&gt;</c> parameter of given method if any. Otherwise <c>null</c>.
+        /// </summary>
+        internal static ParameterSymbol LateStaticParameter(this MethodSymbol method)
+        {
+            // in source routines, we can iterate just the implicit parameters and not populating the source parameters
+            var ps = method is SourceRoutineSymbol sr ? sr.ImplicitParameters : method.Parameters;
+
+            foreach (var p in ps)
+            {
+                if (SpecialParameterSymbol.IsLateStaticParameter(p))
+                {
+                    return p;
+                }
+                else if (!p.IsImplicitlyDeclared)
+                {
+                    break;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -310,6 +362,79 @@ namespace Pchp.CodeAnalysis.Symbols
             var lambdas = ((ILambdaContainerSymbol)file).Lambdas;
 
             return funcs.Concat(main).Concat(methods).Concat(lambdas);
+        }
+
+        /// <summary>
+        /// Gets PHPDoc assoviated with given source symbol.
+        /// </summary>
+        internal static bool TryGetPHPDocBlock(this Symbol symbol, out PHPDocBlock phpdoc)
+        {
+            phpdoc = symbol?.OriginalDefinition switch
+            {
+                SourceRoutineSymbol routine => routine.PHPDocBlock,
+                SourceFieldSymbol field => field.PHPDocBlock,
+                SourceTypeSymbol type => type.Syntax.PHPDoc,
+                _ => null
+            };
+
+            return phpdoc != null;
+        }
+
+        /// <summary>
+        /// The resource contains an additional textual metadata to be used by the runtime if needed (JSON format).
+        /// The resource is indexed by the symbol full metadata name.
+        /// Can be <c>null</c>.
+        /// </summary>
+        internal static string GetSymbolMetadataResource(this Symbol symbol)
+        {
+            // CONSIDER: not for private/internal symbols ?
+
+            if (TryGetPHPDocBlock(symbol, out var phpdoc) && symbol.GetContainingFileSymbol() is SourceFileSymbol file)
+            {
+                var phpdoctext = file.SyntaxTree.GetText().ToString(phpdoc.Span.ToTextSpan());
+
+                // cleanup the phpdoctext
+                // trim lines:
+                var result = new StringBuilder(phpdoctext.Length);
+
+                using (var reader = new StringReader(phpdoctext))
+                {
+                    for (; ; )
+                    {
+                        var line = reader.ReadLine();
+                        if (line != null)
+                        {
+                            if (result.Length != 0)
+                                result.Append("\n ");
+
+                            result.Append(line.Trim());
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                ////
+                //var stream = new System.IO.StringWriter();
+                //using (var writer = new JsonWriter(stream))
+                //{
+                //    writer.WriteObjectStart();
+                //    writer.Write("doc", phpdoctext);
+                //    // TODO: location, return type, ...
+                //    writer.WriteObjectEnd();
+                //}
+
+                //return stream.ToString();
+
+                // create "smaller" json // CONSIDER: use some library that allows to skip whitespaces, newtonsoft or netcore 3.0
+                result.Replace("\\", "\\\\").Replace("\n", "\\n").Replace("\r", "").Replace("\"", "\\\"");  // naively escape
+                return $"{{\"doc\":\"{(result.ToString())}\"}}";
+            }
+
+            // no metadata
+            return null;
         }
     }
 }

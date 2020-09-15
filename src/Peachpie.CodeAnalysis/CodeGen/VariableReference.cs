@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection.Metadata;
 using System.Text;
 using Devsense.PHP.Syntax;
@@ -122,7 +123,7 @@ namespace Pchp.CodeAnalysis.Semantics
                 {
                     // EnsureAlias(ref PhpValue)
                     place.EmitLoadAddress(cg.Builder);
-                    return cg.EmitCall(ILOpCode.Call, cg.CoreMethods.PhpValue.EnsureAlias).Expect(cg.CoreTypes.PhpAlias);
+                    return cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.EnsureAlias_PhpValueRef).Expect(cg.CoreTypes.PhpAlias);
                 }
 
                 throw cg.NotImplementedException($"EnsureAlias for {type}.");
@@ -142,9 +143,9 @@ namespace Pchp.CodeAnalysis.Semantics
                         throw cg.NotImplementedException("unreachable: variable does not have an address");
                     }
 
-                    // (ref PhpValue).EnsureObject() : object
+                    // EnsureObject(ref PhpValue) : object
                     place.EmitLoadAddress(cg.Builder);
-                    cg.EmitCall(ILOpCode.Call, cg.CoreMethods.PhpValue.EnsureObject).Expect(SpecialType.System_Object);
+                    cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.EnsureObject_PhpValueRef).Expect(SpecialType.System_Object);
 
                     //if (_thint.IsSingleType && cg.IsClassOnly(_thint))
                     //{
@@ -212,7 +213,7 @@ namespace Pchp.CodeAnalysis.Semantics
                     {
                         // <place>.EnsureArray() : IPhpArray
                         place.EmitLoadAddress(cg.Builder);
-                        return cg.EmitCall(ILOpCode.Call, cg.CoreMethods.PhpValue.EnsureArray).Expect(cg.CoreTypes.IPhpArray);
+                        return cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.EnsureArray_PhpValueRef).Expect(cg.CoreTypes.IPhpArray);
                     }
                 }
                 else if (type == cg.CoreTypes.PhpString)
@@ -275,13 +276,12 @@ namespace Pchp.CodeAnalysis.Semantics
         /// <param name="place">Target place to be assigned to.</param>
         /// <param name="cg">Ref to <see cref="CodeGenerator"/>.</param>
         /// <param name="access">The place's access.</param>
-        /// <param name="mightBeAliased">Whether the place's value might be <c>PhpAlias</c>. Assignment has to be treated differently.</param>
         /// <returns></returns>
-        public static LhsStack EmitStorePreamble(this IPlace place, CodeGenerator cg, BoundAccess access, bool mightBeAliased)
+        public static LhsStack EmitStorePreamble(this IPlace place, CodeGenerator cg, BoundAccess access)
         {
             var type = place.Type;
 
-            if (mightBeAliased && type == cg.CoreTypes.PhpValue && place.HasAddress && !access.IsWriteRef && !access.IsUnset)
+            if (!access.IsNotRef && type == cg.CoreTypes.PhpValue && place.HasAddress && !access.IsWriteRef && !access.IsUnset)
             {
                 // might be ref ? emit address and use SetValue() operator
                 place.EmitLoadAddress(cg.Builder);
@@ -296,7 +296,7 @@ namespace Pchp.CodeAnalysis.Semantics
             }
             else
             {
-                place.EmitStorePrepare(cg.Builder); // TODO: return LhsStack
+                place.EmitStorePrepare(cg.Builder); // TODO: LhsStack
 
                 return default;
             }
@@ -464,7 +464,7 @@ namespace Pchp.CodeAnalysis.Semantics
                         var lhs = new LhsStack();
 
                         cg.EmitConvert(receiver, 0, lhs.Stack = symbol.ContainingType);
-                        
+
                         if (symbol.ContainingType.IsValueType)
                         {
                             cg.EmitStructAddr(symbol.ContainingType);
@@ -621,32 +621,25 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public virtual bool HasAddress => true;
 
-        /// <summary>
-        /// Gets value indicating the value can refer to <c>PhpAlias</c>.
-        /// </summary>
-        private bool MightBeAliased
+        public virtual IPlace Place { get; protected set; }
+
+        protected SynthesizedLocalKind SynthesizedLocalKind
         {
             get
             {
-                if (IsOptimized && BoundName.IsDirect)
+                if (Symbol is SynthesizedLocalSymbol)
                 {
-                    // make use of type analysis,
-                    // whether the variable can contain a ref (PhpAlias):
-                    var ctx = Routine.ControlFlowGraph.FlowContext;
-                    var type = ctx.GetVarType(BoundName.NameValue);
-
-                    if (!type.IsRef)
-                    {
-                        return false;
-                    }
+                    return SynthesizedLocalKind.EmitterTemp;
                 }
 
-                //
-                return true;
+                if (VariableKind == VariableKind.LocalTemporalVariable)
+                {
+                    return SynthesizedLocalKind.LoweringTemp ;
+                }
+
+                return SynthesizedLocalKind.UserDefined;
             }
         }
-
-        public virtual IPlace Place { get; protected set; }
 
         public LocalVariableReference(VariableKind kind, SourceRoutineSymbol routine, Symbol symbol, BoundVariableName name)
         {
@@ -662,7 +655,12 @@ namespace Pchp.CodeAnalysis.Semantics
         /// </summary>
         public virtual void EmitInit(CodeGenerator cg)
         {
-            if (IsOptimized == false || cg.InitializedLocals)
+            if (VariableKind == VariableKind.LocalTemporalVariable && cg.Routine != null && (cg.Routine.Flags & FlowAnalysis.RoutineFlags.IsGenerator) == 0)
+            {
+                // continue,
+                // create Place
+            }
+            else if (IsOptimized == false || cg.InitializedLocals)
             {
                 // do nothing,
                 // Place == null
@@ -675,26 +673,25 @@ namespace Pchp.CodeAnalysis.Semantics
             var il = cg.Builder;
             var def = il.LocalSlotManager.DeclareLocal(
                     (Cci.ITypeReference)Symbol.GetTypeOrReturnType(), Symbol as ILocalSymbolInternal,
-                    this.Name, SynthesizedLocalKind.UserDefined,
+                    this.Name, this.SynthesizedLocalKind,
                     LocalDebugId.None, 0, LocalSlotConstraints.None, ImmutableArray<bool>.Empty, ImmutableArray<string>.Empty, false);
             il.AddLocalToScope(def);
 
             this.Place = new LocalPlace(def);
 
             //
-            if (Symbol is SynthesizedLocalSymbol)
+            if (this.SynthesizedLocalKind == SynthesizedLocalKind.UserDefined)
             {
-                return;
+
+                // Initialize local variable with void.
+                // This is mandatory since even assignments reads the target value to assign properly to PhpAlias.
+
+                // TODO: Once analysis tells us, the target cannot be alias, this step won't be necessary.
+
+                // TODO: only if the local will be used uninitialized
+
+                cg.EmitInitializePlace(Place);
             }
-
-            // Initialize local variable with void.
-            // This is mandatory since even assignments reads the target value to assign properly to PhpAlias.
-
-            // TODO: Once analysis tells us, the target cannot be alias, this step won't be necessary.
-
-            // TODO: only if the local will be used uninitialized
-
-            cg.EmitInitializePlace(Place);
         }
 
         TypeSymbol LoadVariablesArray(CodeGenerator cg)
@@ -721,7 +718,7 @@ namespace Pchp.CodeAnalysis.Semantics
         {
             if (Place != null)
             {
-                return Place.EmitStorePreamble(cg, access, mightBeAliased: MightBeAliased);
+                return Place.EmitStorePreamble(cg, access);
             }
             else
             {
@@ -839,10 +836,11 @@ namespace Pchp.CodeAnalysis.Semantics
 
         static void EmitTypeCheck(CodeGenerator cg, IPlace valueplace, SourceParameterSymbol srcparam)
         {
-            // TODO: check callable, iterable, type if not resolved in ct
+            // TODO: check iterable, type if not resolved in ct
+            // TODO: check union types
 
             // check NotNull
-            if (srcparam.IsNotNull)
+            if (srcparam.HasNotNull)
             {
                 if ((valueplace.Type.IsReferenceType /*|| valueplace.Type.Is_PhpValue()*/) && valueplace.Type != cg.CoreTypes.PhpAlias)
                 {
@@ -864,6 +862,20 @@ namespace Pchp.CodeAnalysis.Semantics
                     cg.Builder.EmitIntConstant(srcparam.ParameterIndex + 1);
                     cg.EmitPop(cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.ThrowIfArgumentNull_object_int));
                 }
+            }
+
+            // check callable
+            if (srcparam.Syntax.TypeHint.IsCallable())
+            {
+                cg.EmitSequencePoint(srcparam.Syntax);
+
+                // Template: PhpException.ThrowIfArgumentNotCallable(<ctx>, current RuntimeTypeHandle, value, arg)
+                cg.EmitLoadContext();
+                cg.EmitCallerTypeHandle();
+                cg.EmitConvertToPhpValue(valueplace.EmitLoad(cg.Builder), default);     // To handle conversion from PhpAlias when the parameter is by ref
+                cg.Builder.EmitBoolConstant(!srcparam.HasNotNull);
+                cg.Builder.EmitIntConstant(srcparam.ParameterIndex + 1);
+                cg.EmitPop(cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.ThrowIfArgumentNotCallable_Context_RuntimeTypeHandle_PhpValue_Bool_int));
             }
         }
 
@@ -896,23 +908,19 @@ namespace Pchp.CodeAnalysis.Semantics
         sealed class DirectParameter : IParameterSource, IParameterTarget
         {
             readonly IPlace _place;
-            readonly bool _isparams;
-            readonly bool _byref;
-            readonly bool _notNull;
+            readonly SourceParameterSymbol _param;
 
-            public DirectParameter(IPlace place, bool isparams, bool byref, bool notNull)
+            public DirectParameter(IPlace place, SourceParameterSymbol param)
             {
                 Debug.Assert(place != null);
                 _place = place;
-                _isparams = isparams;
-                _byref = byref;
-                _notNull = notNull;
+                _param = param;
             }
 
             /// <summary>Loads copied parameter value.</summary>
             public TypeSymbol EmitLoad(CodeGenerator cg)
             {
-                if (_isparams)
+                if (_param.IsParams)
                 {
                     // converts params -> PhpArray
                     Debug.Assert(_place.Type.IsSZArray());
@@ -934,29 +942,43 @@ namespace Pchp.CodeAnalysis.Semantics
                         t = _place.EmitLoad(cg.Builder);
                     }
 
-                    // make copy of given value
-                    return cg.EmitDeepCopy(t, nullcheck: !_notNull);
+                    if (_param.CopyOnPass)
+                    {
+                        // make copy of given value
+                        return cg.EmitDeepCopy(t, nullcheck: !_param.HasNotNull);
+                    }
+                    else
+                    {
+                        return t;
+                    }
                 }
             }
 
             public void EmitPass(CodeGenerator cg)
             {
+                if (_param.CopyOnPass == false ||
+                    cg.IsCopiable(_place.Type) == false)
+                {
+                    // copy is not necessary
+                    return;
+                }
+
                 // inplace copies the parameter
 
                 if (_place.Type == cg.CoreTypes.PhpValue)
                 {
                     // dereference & copy
-                    // (ref <param>).PassValue()
+                    // PassValue( ref <param> )
                     _place.EmitLoadAddress(cg.Builder);
-                    cg.EmitCall(ILOpCode.Call, cg.CoreMethods.PhpValue.PassValue);
+                    cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.PassValue_PhpValueRef);
                 }
-                else if (cg.IsCopiable(_place.Type))
+                else
                 {
                     _place.EmitStorePrepare(cg.Builder);
 
                     // copy
                     // <param> = DeepCopy(<param>)
-                    cg.EmitDeepCopy(_place.EmitLoad(cg.Builder), nullcheck: !_notNull);
+                    cg.EmitDeepCopy(_place.EmitLoad(cg.Builder), nullcheck: !_param.HasNotNull);
 
                     _place.EmitStore(cg.Builder);
                 }
@@ -1132,7 +1154,7 @@ namespace Pchp.CodeAnalysis.Semantics
 
             var source = srcparam.IsFake
                 ? (IParameterSource)new IndirectParameterSource(srcparam, srcparam.Routine.GetParamsParameter())
-                : (IParameterSource)new DirectParameter(new ParamPlace(srcparam), srcparam.IsParams, byref: srcparam.Syntax.PassedByRef, notNull: srcparam.IsNotNull);
+                : (IParameterSource)new DirectParameter(new ParamPlace(srcparam), srcparam);
 
             if (cg.HasUnoptimizedLocals == false) // usual case - optimized locals
             {
@@ -1154,7 +1176,7 @@ namespace Pchp.CodeAnalysis.Semantics
             var target = cg.HasUnoptimizedLocals
                 ? (IParameterTarget)new IndirectLocalTarget(srcparam.Name)
                 : (lazyPlace != null)
-                    ? new DirectParameter(lazyPlace, srcparam.IsParams, byref: srcparam.Syntax.PassedByRef, notNull: srcparam.IsNotNull/*not important*/)
+                    ? new DirectParameter(lazyPlace, srcparam)
                     : (DirectParameter)source;
 
             // 1. TypeCheck
@@ -1162,7 +1184,7 @@ namespace Pchp.CodeAnalysis.Semantics
 
             if (source == target)
             {
-                // 2a. (source == target): Pass (inplace copy)
+                // 2a. (source == target): Pass (inplace copy and dereference) if necessary
                 source.EmitPass(cg);
             }
             else
@@ -1181,6 +1203,17 @@ namespace Pchp.CodeAnalysis.Semantics
             Place = lazyPlace ?? (cg.HasUnoptimizedLocals ? null : new ParamPlace(Parameter));
 
             // TODO: ? if (cg.HasUnoptimizedLocals && $this) <locals>["this"] = ...
+
+            if (srcparam.IsConstructorProperty)
+            {
+                var field = srcparam.ContainingType.GetMembers(srcparam.Name).OfType<SourceFieldSymbol>().Single(); // throws if duplicit name
+                var field_place = new FieldPlace(this.Routine.GetThisPlace(), field, cg.Module);
+
+                // $this->{P} = {P};
+                field_place.EmitStorePrepare(cg.Builder);
+                cg.EmitConvert(Place.EmitLoad(cg.Builder), 0, field.Type);
+                field_place.EmitStore(cg.Builder);
+            }
         }
     }
 
@@ -1195,9 +1228,11 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public override IPlace Place
         {
-            get => Routine.GetPhpThisVariablePlace();
+            get => _boundplace ?? Routine.GetPhpThisVariablePlace();
             protected set => throw ExceptionUtilities.Unreachable;
         }
+
+        IPlace _boundplace;
 
         public override bool HasAddress => false;
 
@@ -1210,7 +1245,7 @@ namespace Pchp.CodeAnalysis.Semantics
                 // TODO: <locals>["this"] = this;
             }
 
-            // nada
+            _boundplace = Routine.GetPhpThisVariablePlace(cg.Module);
         }
 
         public override TypeSymbol EmitLoadValue(CodeGenerator cg, ref LhsStack lhs, BoundAccess access)
@@ -1370,7 +1405,11 @@ namespace Pchp.CodeAnalysis.Semantics
         {
             LhsStack lhs = default;
 
-            return VariableReferenceExtensions.EmitReceiver(cg, ref lhs, Field, Receiver) + new FieldPlace_Raw(Field, cg.Module).EmitStorePreamble(cg, access, mightBeAliased: true);
+            var fieldplace = new FieldPlace_Raw(Field, cg.Module);
+
+            return
+                VariableReferenceExtensions.EmitReceiver(cg, ref lhs, Field, Receiver) +
+                fieldplace.EmitStorePreamble(cg, access);
         }
 
         public void EmitStore(CodeGenerator cg, ref LhsStack lhs, TypeSymbol stack, BoundAccess access)
@@ -1392,10 +1431,10 @@ namespace Pchp.CodeAnalysis.Semantics
 
             VariableReferenceExtensions.EmitReceiver(cg, ref lhs, Field, Receiver);
 
-            if (access.IsQuiet && Receiver != null && cg.CanBeNull(Receiver.TypeRefMask))
+            if (access.IsQuiet && Receiver != null && (cg.CanBeNull(Receiver.TypeRefMask) || !cg.TypeRefContext.IsObjectOnly(Receiver.TypeRefMask)))
             {
                 // handle nullref in "quiet" mode (e.g. within empty() expression),
-                // emit something like C#'s "?." operator
+                // emit null-safe "?." operator
 
                 //  .dup ? .ldfld : default
 
@@ -1484,7 +1523,7 @@ namespace Pchp.CodeAnalysis.Semantics
                 stack = cg.EmitLoadDefault(type, 0);
             }
 
-            cg.EmitConvert(stack, 0, type);
+            cg.EmitConvert(stack, 0, type, conversion: ConversionKind.Strict);
             cg.EmitCall(setter.IsVirtual ? ILOpCode.Callvirt : ILOpCode.Call, setter);
         }
 
@@ -1718,7 +1757,7 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public LhsStack EmitStorePreamble(CodeGenerator cg, BoundAccess access)
         {
-            return Place.EmitStorePreamble(cg, access, mightBeAliased: true);
+            return Place.EmitStorePreamble(cg, access);
         }
 
         public void EmitStore(CodeGenerator cg, ref LhsStack lhs, TypeSymbol stack, BoundAccess access)

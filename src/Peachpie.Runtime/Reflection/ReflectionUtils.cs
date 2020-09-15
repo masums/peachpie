@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -98,7 +99,7 @@ namespace Pchp.Core.Reflection
 
             return
                 t.IsSealed &&
-                t.IsGenericTypeDefinition &&
+                t.IsGenericType &&
                 t.GetCustomAttribute<PhpTraitAttribute>(false) != null;
         }
 
@@ -108,7 +109,7 @@ namespace Pchp.Core.Reflection
         public static bool IsInstantiable(Type t) => t != null && !t.IsInterface && !t.IsAbstract; // => not static
 
         /// <summary>
-        /// Determines whether given parametr allows <c>NULL</c> as the argument value.
+        /// Determines whether given parameter allows <c>NULL</c> as the argument value.
         /// </summary>
         public static bool IsNullable(this ParameterInfo p)
         {
@@ -137,7 +138,7 @@ namespace Pchp.Core.Reflection
         /// <summary>
         /// Types that we do not expose in reflection.
         /// </summary>
-        readonly static HashSet<Type> s_hiddenTypes = new HashSet<Type>()
+        static readonly HashSet<Type> s_hiddenTypes = new HashSet<Type>()
         {
             typeof(object),
             typeof(IPhpCallable),
@@ -147,14 +148,17 @@ namespace Pchp.Core.Reflection
             typeof(System.Dynamic.IDynamicMetaObjectProvider),
             typeof(IPhpArray),
             typeof(IPhpConvertible),
+            typeof(IPhpPrintable),
             typeof(IPhpComparable),
+            typeof(IEnumerable),
+            typeof(IEnumerable<>),
         };
 
         /// <summary>
         /// Determines if given type is not visible to PHP runtime.
         /// We implement these types implicitly in compile time, so we should ignore them at proper places.
         /// </summary>
-        public static bool IsHiddenType(this Type t) => s_hiddenTypes.Contains(t);
+        public static bool IsHiddenType(this Type t) => s_hiddenTypes.Contains(t) || (t.IsConstructedGenericType && s_hiddenTypes.Contains(t.GetGenericTypeDefinition()));
 
         /// <summary>
         /// Determines the parameter is considered as implicitly passed by runtime.
@@ -177,6 +181,44 @@ namespace Pchp.Core.Reflection
             return attrs != null && attrs.Length != 0
                 ? (ScriptAttribute)attrs[0]
                 : null;
+        }
+
+        /// <summary>
+        /// Gets types of parameters of given method
+        /// </summary>
+        public static Type[] GetParametersType(this MethodBase method)
+        {
+            if (method == null)
+            {
+                throw new ArgumentNullException(nameof(method));
+            }
+
+            var ps = method.GetParameters();
+            if (ps.Length == 0)
+            {
+                return Array.Empty<Type>();
+            }
+
+            //
+            var types = new Type[ps.Length];
+            for (int i = 0; i < types.Length; i++)
+            {
+                types[i] = ps[i].ParameterType;
+            }
+            return types;
+        }
+
+        /// <summary>
+        /// Determines if the routine is entirely public.
+        /// </summary>
+        public static bool IsPublic(this RoutineInfo/*!*/routine)
+        {
+            var methods = routine.Methods;
+            for (int i = 0; i < methods.Length; i++)
+            {
+                if (!methods[i].IsPublic) return false;
+            }
+            return true;    // all methods are public
         }
 
         public static bool IsPhpPublic(this MemberInfo m)

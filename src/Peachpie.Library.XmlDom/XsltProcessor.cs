@@ -21,6 +21,7 @@ namespace Peachpie.Library.XmlDom
         Always = -1
     }
 
+    [PhpExtension("dom")]
     public static class XsltConstants
     {
         public const int XSL_CLONE_AUTO = (int)CloneType.Auto;
@@ -31,7 +32,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// Implements the XSLT processor.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("xsl")]
     public class XSLTProcessor
     {
         #region Delegates
@@ -160,6 +161,33 @@ namespace Peachpie.Library.XmlDom
         }
 
         /// <summary>
+        /// Import a stylesheet.
+        /// </summary>
+        /// <param name="stylesheet">The imported style sheet passed as a <see cref="SimpleXMLElement"/> object.</param>
+        /// <returns><B>True</B> or <B>false</B>.</returns>
+        public bool importStylesheet(SimpleXMLElement stylesheet)
+        {
+            try
+            {
+                if (stylesheet.XmlElement.ParentNode is XmlDocument)
+                {
+                    Load(stylesheet.XmlElement.ParentNode.GetXmlDocument());
+                }
+                else
+                {
+                    PhpException.Throw(PhpError.Warning, Resources.InvalidDocument);
+                    return false;
+                }
+            }
+            catch (XsltException e)
+            {
+                PhpException.Throw(PhpError.Warning, e.Message);
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
         /// Transforms the source node to a <see cref="DOMDocument"/> applying the stylesheet given by the
         /// <see cref="importStylesheet(DOMDocument)"/> method.
         /// </summary>
@@ -168,8 +196,7 @@ namespace Peachpie.Library.XmlDom
         [return: CastToFalse]
         public DOMDocument transformToDoc(DOMNode node)
         {
-            XmlDocument doc = new XmlDocument();
-            doc.PreserveWhitespace = true;
+            var doc = PhpXmlDocument.Create();
 
             using (MemoryStream stream = new MemoryStream())
             {

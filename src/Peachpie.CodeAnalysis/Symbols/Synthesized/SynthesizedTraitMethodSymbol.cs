@@ -17,27 +17,28 @@ namespace Pchp.CodeAnalysis.Symbols
         public SynthesizedTraitMethodSymbol(TypeSymbol containingType, string name, MethodSymbol traitmethod, Accessibility accessibility, bool isfinal = true)
             : base(containingType, name, traitmethod.IsStatic, !traitmethod.IsStatic && !containingType.IsTraitType(), null, accessibility, isfinal)
         {
-            _parameters = default(ImmutableArray<ParameterSymbol>);
+            _parameters = default;  // as uninitialized
 
             this.ForwardedCall = traitmethod;
         }
+
+        //protected override Symbol OriginalSymbolDefinition => ForwardedCall;
 
         public override ImmutableArray<ParameterSymbol> Parameters
         {
             get
             {
+                if (!_parameters.IsDefault && _parameters.Length != ForwardedCall.Parameters.Length)
+                {
+                    // parameters has changed during analysis,
+                    // reset this as well
+                    // IMPORTANT: we must not change it when emit started already
+                    _parameters = default;
+                }
+
                 if (_parameters.IsDefault)
                 {
-                    // clone parameters:
-                    var srcparams = ForwardedCall.Parameters;
-                    var ps = new List<ParameterSymbol>(srcparams.Length);
-
-                    foreach (var p in srcparams)
-                    {
-                        ps.Add(SynthesizedParameterSymbol.Create(this, p));
-                    }
-
-                    ImmutableInterlocked.InterlockedInitialize(ref _parameters, ps.AsImmutableOrEmpty());
+                    ImmutableInterlocked.InterlockedInitialize(ref _parameters, SynthesizedParameterSymbol.Create(this, ForwardedCall.Parameters));
                 }
 
                 //

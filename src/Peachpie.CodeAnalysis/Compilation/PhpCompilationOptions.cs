@@ -65,14 +65,33 @@ namespace Pchp.CodeAnalysis
         public string SdkDirectory { get; private set; }
 
         /// <summary>
+        /// What framework is the compiled assembly supposed to run on,
+        /// e.g. <c>.NETCoreApp,Version=v3.1</c>.
+        /// </summary>
+        public string TargetFramework { get; private set; }
+
+        /// <summary>
         /// Options for getting type information from correspodning PHPDoc comments.
         /// </summary>
         public PhpDocTypes PhpDocTypes { get; private set; }
 
         /// <summary>
+        /// Whether to generate an embedded resource containing additional information about the source symbols.
+        /// Used by runtime for reflection.
+        /// Default is <c>true</c>.
+        /// </summary>
+        public bool EmbedSourceMetadata { get; private set; }
+
+        /// <summary>
         /// Source language options.
         /// </summary>
         public PhpParseOptions ParseOptions { get; private set; }
+
+        /// <summary>
+        /// The compilation language version.
+        /// Gets <see cref="PhpParseOptions.LanguageVersion"/> or default language version if not specified.
+        /// </summary>
+        public Version LanguageVersion => ParseOptions?.LanguageVersion ?? PhpSyntaxTree.DefaultLanguageVersion;
 
         /// <summary>
         /// Options diagnostics.
@@ -87,7 +106,34 @@ namespace Pchp.CodeAnalysis
         /// <summary>
         /// List of observer instances.
         /// </summary>
-        public ImmutableArray<IObserver<object>> Observers { get; internal set; }
+        public ImmutableArray<IObserver<object>> EventSources { get; internal set; }
+
+        /// <summary>
+        /// The compilation optimization level.
+        /// </summary>
+        public new PhpOptimizationLevel OptimizationLevel { get; internal set; }
+
+        /// <summary>
+        /// Set of compile-time defined constants.
+        /// </summary>
+        public ImmutableDictionary<string, string> Defines { get; internal set; }
+
+        /// <summary>
+        /// Set of relative file names from which class map will be generated.
+        /// Contained types will be marked as autoloaded.
+        /// </summary>
+        public ISet<string> Autoload_ClassMapFiles { get; internal set; }
+
+        /// <summary>
+        /// Set of relative file names to be marked as autoloaded.
+        /// </summary>
+        public ISet<string> Autoload_Files { get; internal set; }
+
+        /// <summary>
+        /// Collection of PSR-4 autoload rules.
+        /// Matching types (classes, traits and interfaces) will be marked as autoloaded.
+        /// </summary>
+        public IReadOnlyCollection<(string prefix, string path)> Autoload_PSR4 { get; internal set; }
 
         ///// <summary>
         ///// Flags applied to the top-level binder created for each syntax tree in the compilation 
@@ -102,16 +148,17 @@ namespace Pchp.CodeAnalysis
             string baseDirectory,
             string sdkDirectory,
             string subDirectory = null,
+            string targetFramework = null,
             bool reportSuppressedDiagnostics = false,
             string moduleName = null,
             string mainTypeName = null,
             string scriptClassName = null,
             string versionString = null,
-            OptimizationLevel optimizationLevel = OptimizationLevel.Debug,
+            PhpOptimizationLevel optimizationLevel = PhpOptimizationLevel.Debug,
             bool checkOverflow = false,
             string cryptoKeyContainer = null,
             string cryptoKeyFile = null,
-            ImmutableArray<byte> cryptoPublicKey = default(ImmutableArray<byte>),
+            ImmutableArray<byte> cryptoPublicKey = default,
             bool? delaySign = null,
             Platform platform = Platform.AnyCpu,
             ReportDiagnostic generalDiagnosticOption = ReportDiagnostic.Default,
@@ -127,10 +174,12 @@ namespace Pchp.CodeAnalysis
             StrongNameProvider strongNameProvider = null,
             bool publicSign = false,
             PhpDocTypes phpdocTypes = PhpDocTypes.None,
-            ImmutableArray<Diagnostic> diagnostics = default(ImmutableArray<Diagnostic>),
+            bool embedSourceMetadata = true,
+            ImmutableArray<Diagnostic> diagnostics = default,
             PhpParseOptions parseOptions = null,
+            ImmutableDictionary<string, string> defines = default,
             bool referencesSupersedeLowerVersions = false)
-            : this(outputKind, baseDirectory, sdkDirectory, subDirectory,
+            : this(outputKind, baseDirectory, sdkDirectory, subDirectory, targetFramework,
                    reportSuppressedDiagnostics, moduleName, mainTypeName, scriptClassName,
                    versionString,
                    optimizationLevel, checkOverflow,
@@ -147,7 +196,9 @@ namespace Pchp.CodeAnalysis
                    metadataImportOptions: MetadataImportOptions.Public,
                    publicSign: publicSign,
                    phpdocTypes: phpdocTypes,
+                   embedSourceMetadata: embedSourceMetadata,
                    diagnostics: diagnostics,
+                   defines: defines,
                    parseOptions: parseOptions,
                    referencesSupersedeLowerVersions: referencesSupersedeLowerVersions)
         {
@@ -159,12 +210,13 @@ namespace Pchp.CodeAnalysis
             string baseDirectory,
             string sdkDirectory,
             string subDirectory,
+            string targetFramework,
             bool reportSuppressedDiagnostics,
             string moduleName,
             string mainTypeName,
             string scriptClassName,
             string versionString,
-            OptimizationLevel optimizationLevel,
+            PhpOptimizationLevel optimizationLevel,
             bool checkOverflow,
             string cryptoKeyContainer,
             string cryptoKeyFile,
@@ -186,11 +238,13 @@ namespace Pchp.CodeAnalysis
             MetadataImportOptions metadataImportOptions,
             bool publicSign,
             PhpDocTypes phpdocTypes,
+            bool embedSourceMetadata,
             ImmutableArray<Diagnostic> diagnostics,
             PhpParseOptions parseOptions,
+            ImmutableDictionary<string, string> defines,
             bool referencesSupersedeLowerVersions)
             : base(outputKind, reportSuppressedDiagnostics, moduleName, mainTypeName, scriptClassName,
-                   cryptoKeyContainer, cryptoKeyFile, cryptoPublicKey, delaySign, publicSign, optimizationLevel, checkOverflow,
+                   cryptoKeyContainer, cryptoKeyFile, cryptoPublicKey, delaySign, publicSign, optimizationLevel.AsOptimizationLevel(), checkOverflow,
                    platform, generalDiagnosticOption, warningLevel, specificDiagnosticOptions.ToImmutableDictionaryOrEmpty(),
                    concurrentBuild, deterministic, currentLocalTime, debugPlusMode, xmlReferenceResolver,
                    sourceReferenceResolver, metadataReferenceResolver, assemblyIdentityComparer,
@@ -199,10 +253,14 @@ namespace Pchp.CodeAnalysis
             this.BaseDirectory = baseDirectory;
             this.SdkDirectory = sdkDirectory;
             this.SubDirectory = subDirectory;
+            this.TargetFramework = targetFramework;
             this.PhpDocTypes = phpdocTypes;
+            this.EmbedSourceMetadata = embedSourceMetadata;
             this.ParseOptions = parseOptions;
             this.Diagnostics = diagnostics;
             this.VersionString = versionString;
+            this.OptimizationLevel = optimizationLevel;
+            this.Defines = defines;
         }
 
         private PhpCompilationOptions(PhpCompilationOptions other) : this(
@@ -210,6 +268,7 @@ namespace Pchp.CodeAnalysis
             baseDirectory: other.BaseDirectory,
             sdkDirectory: other.SdkDirectory,
             subDirectory: other.SubDirectory,
+            targetFramework: other.TargetFramework,
             moduleName: other.ModuleName,
             mainTypeName: other.MainTypeName,
             scriptClassName: other.ScriptClassName,
@@ -237,11 +296,16 @@ namespace Pchp.CodeAnalysis
             reportSuppressedDiagnostics: other.ReportSuppressedDiagnostics,
             publicSign: other.PublicSign,
             phpdocTypes: other.PhpDocTypes,
+            embedSourceMetadata: other.EmbedSourceMetadata,
             diagnostics: other.Diagnostics,
             parseOptions: other.ParseOptions,
+            defines: other.Defines,
             referencesSupersedeLowerVersions: other.ReferencesSupersedeLowerVersions)
         {
-            Observers = other.Observers;
+            EventSources = other.EventSources;
+            Autoload_ClassMapFiles = other.Autoload_ClassMapFiles;
+            Autoload_Files = other.Autoload_Files;
+            Autoload_PSR4 = other.Autoload_PSR4;
         }
 
         public override string Language => Constants.PhpLanguageName;
@@ -335,12 +399,12 @@ namespace Pchp.CodeAnalysis
 
         public new PhpCompilationOptions WithOptimizationLevel(OptimizationLevel value)
         {
-            if (value == this.OptimizationLevel)
+            if (value == base.OptimizationLevel)
             {
                 return this;
             }
 
-            return new PhpCompilationOptions(this) { OptimizationLevel = value };
+            return new PhpCompilationOptions(this) { OptimizationLevel = value.AsPhpOptimizationLevel() };
         }
 
         public new PhpCompilationOptions WithOverflowChecks(bool enabled)
@@ -371,6 +435,16 @@ namespace Pchp.CodeAnalysis
             }
 
             return new PhpCompilationOptions(this) { PublicSign = publicSign };
+        }
+
+        public PhpCompilationOptions WithParseOptions(PhpParseOptions parseoptions)
+        {
+            if (ReferenceEquals(this.ParseOptions, parseoptions))
+            {
+                return this;
+            }
+
+            return new PhpCompilationOptions(this) { ParseOptions = parseoptions };
         }
 
         protected override CompilationOptions CommonWithGeneralDiagnosticOption(ReportDiagnostic value) => WithGeneralDiagnosticOption(value);
@@ -460,6 +534,16 @@ namespace Pchp.CodeAnalysis
             }
 
             return new PhpCompilationOptions(this) { DebugPlusMode_internal_protected_set = debugPlusMode };
+        }
+
+        public PhpCompilationOptions WithDefines(ImmutableDictionary<string, string> defines)
+        {
+            if (this.Defines == defines)
+            {
+                return this;
+            }
+
+            return new PhpCompilationOptions(this) { Defines = defines };
         }
 
         public new PhpCompilationOptions WithMetadataImportOptions(MetadataImportOptions value)

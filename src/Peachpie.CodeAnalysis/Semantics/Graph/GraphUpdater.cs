@@ -252,7 +252,7 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
                     updated,
                     moveNext.KeyVariable,
                     moveNext.ValueVariable,
-                    moveNext.MoveSpan);
+                    moveNext.MoveNextSpan);
             }
 
             return updated;
@@ -268,7 +268,7 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
                 x.EnumereeEdge,                                     // It updates this reference in its visit instead
                 (BoundReferenceExpression)Accept(x.KeyVariable),
                 (BoundReferenceExpression)Accept(x.ValueVariable),
-                x.MoveSpan);
+                x.MoveNextSpan);
         }
 
         public override object VisitCFGSwitchEdge(SwitchEdge x)
@@ -446,7 +446,8 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
         {
             return x.Update(
                 (BoundReferenceExpression)Accept(x.Target),
-                (BoundExpression)Accept(x.Value));
+                (BoundExpression)Accept(x.Value),
+                x.Operation);
         }
 
         public override object VisitVariableName(BoundVariableName x)
@@ -486,6 +487,13 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
         }
 
         public override object VisitArrayItem(BoundArrayItemEx x)
+        {
+            return x.Update(
+                (BoundExpression)Accept(x.Array),
+                (BoundExpression)Accept(x.Index));
+        }
+
+        public override object VisitArrayItemOrd(BoundArrayItemOrdEx x)
         {
             return x.Update(
                 (BoundExpression)Accept(x.Array),
@@ -536,6 +544,14 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
         public override object VisitOffsetExists(BoundOffsetExists x)
         {
             return x.Update((BoundExpression)Accept(x.Receiver), (BoundExpression)Accept(x.Index));
+        }
+
+        public override object VisitTryGetItem(BoundTryGetItem x)
+        {
+            return x.Update(
+                (BoundExpression)Accept(x.Array),
+                (BoundExpression)Accept(x.Index),
+                (BoundExpression)Accept(x.Fallback));
         }
 
         public override object VisitLambda(BoundLambda x)
@@ -592,9 +608,9 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
             return x.Update((BoundExpression)Accept(x.Returned));
         }
 
-        public override object VisitThrow(BoundThrowStatement x)
+        public override object VisitThrow(BoundThrowExpression x)
         {
-            return x.Update((BoundExpression)x.Thrown);
+            return x.Update(x.Thrown);
         }
 
         public override object VisitFunctionDeclaration(BoundFunctionDeclStatement x)

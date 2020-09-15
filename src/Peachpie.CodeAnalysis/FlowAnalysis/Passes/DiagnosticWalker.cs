@@ -14,15 +14,13 @@ using Pchp.CodeAnalysis.Symbols;
 using Devsense.PHP.Syntax.Ast;
 using Peachpie.CodeAnalysis.Utilities;
 using Pchp.CodeAnalysis.Semantics.TypeRef;
-using System.Text.RegularExpressions;
 using Devsense.PHP.Syntax;
+using Pchp.CodeAnalysis.Utilities;
 
 namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 {
     internal partial class DiagnosticWalker<T> : GraphExplorer<T>
     {
-        private static readonly Regex PrintfSpecsRegex = new Regex(@"%(?:(\d)+\$)?[+-]?(?:[ 0]|'.{1})?-?\d*(?:\.\d+)?[bcdeEufFgGosxX]");
-
         private readonly DiagnosticBag _diagnostics;
         private SourceRoutineSymbol _routine;
 
@@ -31,40 +29,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
         PhpCompilation DeclaringCompilation => _routine.DeclaringCompilation;
 
         TypeRefContext TypeCtx => _routine.TypeRefContext;
-
-        #region Scope
-
-        struct Scope
-        {
-            public enum Kind
-            {
-                Try, Catch, Finally,
-            }
-
-            public bool Contains(BoundBlock b) => b != null && b.Ordinal >= From && b.Ordinal < To;
-
-            public bool IsTryCatch => ScopeKind == Kind.Try || ScopeKind == Kind.Catch || ScopeKind == Kind.Finally;
-
-            public int From, To;
-            public Kind ScopeKind;
-        }
-
-        List<Scope> _lazyScopes = null;
-
-        /// <summary>
-        /// Stores a scope (range) of blocks.
-        /// </summary>
-        void WithScope(Scope scope)
-        {
-            if (_lazyScopes == null) _lazyScopes = new List<Scope>();
-            _lazyScopes.Add(scope);
-        }
-
-        bool IsInScope(Scope.Kind kind) => _lazyScopes != null && _lazyScopes.Any(s => s.ScopeKind == kind && s.Contains(_currentBlock));
-
-        bool IsInTryCatchScope() => _lazyScopes != null && _lazyScopes.Any(s => s.IsTryCatch && s.Contains(_currentBlock));
-
-        #endregion
 
         void CheckMissusedPrimitiveType(IBoundTypeRef tref)
         {
@@ -90,11 +54,16 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             //
             routine.GetDiagnostics(diagnostics);
 
+            var visitor = new DiagnosticWalker<VoidStruct>(diagnostics, routine);
+
             //
             if (routine.ControlFlowGraph != null)   // non-abstract method
             {
-                new DiagnosticWalker<VoidStruct>(diagnostics, routine).VisitCFG(routine.ControlFlowGraph);
+                visitor.VisitCFG(routine.ControlFlowGraph);
             }
+
+            //
+            visitor.CheckParams();
         }
 
         private DiagnosticWalker(DiagnosticBag diagnostics, SourceRoutineSymbol routine)
@@ -108,8 +77,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             Debug.Assert(x == _routine.ControlFlowGraph);
 
             base.VisitCFGInternal(x);
-
-            CheckParams();
 
             if (CallsParentCtor == false &&
                 new Name(_routine.Name).IsConstructName &&
@@ -146,6 +113,14 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             return false;
         }
 
+        /// <summary>
+        /// Determines if both identifiers differ only in casing.
+        /// </summary>
+        static bool IsLetterCasingMismatch(string str1, string str2)
+        {
+            return str1 != str2 && string.Equals(str1, str2, StringComparison.InvariantCultureIgnoreCase);
+        }
+
         private void CheckParams()
         {
             // Check the compatibility of type hints with PhpDoc, if both exist
@@ -175,6 +150,74 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                     //}
                 }
             }
+
+            // check source parameters
+            var srcparams = _routine.SourceParameters;
+            foreach (var p in srcparams)
+            {
+                if (!CheckParameterDefaultValue(p))
+                {
+                    var expectedtype = (p.Syntax.TypeHint is NullableTypeRef nullable ? nullable.TargetType : p.Syntax.TypeHint).ToString(); // do not show "?" in nullable types
+                    var valuetype = TypeCtx.ToString(p.Initializer.TypeRefMask);
+
+                    _diagnostics.Add(_routine, p.Syntax.InitValue, ErrorCode.ERR_DefaultParameterValueTypeMismatch, p.Name, expectedtype, valuetype);
+                }
+            }
+        }
+
+        bool CheckParameterDefaultValue(SourceParameterSymbol p)
+        {
+            var thint = p.Syntax.TypeHint;
+            if (thint != null)
+            {
+                // check type hint and default value
+                var defaultvalue = p.Initializer;
+                if (defaultvalue != null && !defaultvalue.TypeRefMask.IsAnyType && !defaultvalue.TypeRefMask.IsDefault)
+                {
+                    var valuetype = defaultvalue.TypeRefMask;
+
+                    if (TypeCtx.IsNull(valuetype))
+                    {
+                        // allow NULL anytime
+                        return true;
+                    }
+
+                    if (thint is NullableTypeRef nullable)
+                    {
+                        // unwrap nullable type hint
+                        thint = nullable.TargetType;
+                    }
+
+                    if (thint is PrimitiveTypeRef primitive)
+                    {
+                        switch (primitive.PrimitiveTypeName)
+                        {
+                            case PrimitiveTypeRef.PrimitiveType.@bool:
+                                return TypeCtx.IsBoolean(valuetype);
+
+                            case PrimitiveTypeRef.PrimitiveType.array:
+                                return TypeCtx.IsArray(valuetype);
+
+                            case PrimitiveTypeRef.PrimitiveType.@string:
+                                return TypeCtx.IsAString(valuetype);
+
+                            case PrimitiveTypeRef.PrimitiveType.@object:
+                                return false;
+
+                            case PrimitiveTypeRef.PrimitiveType.@float:
+                            case PrimitiveTypeRef.PrimitiveType.@int:
+                                return TypeCtx.IsNumber(valuetype);
+                        }
+                    }
+                    else if (thint is ClassTypeRef classtref)
+                    {
+                        return false; // cannot have default value other than NULL
+                    }
+                }
+            }
+
+            // ok
+            return true;
         }
 
         void CheckLabels(ImmutableArray<ControlFlowGraph.LabelBlockState> labels)
@@ -277,12 +320,12 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 
                 if (ct.Type.Kind != SymbolKind.ErrorType)
                 {
-                    string symbolName = ct.Type.Name;
+                    var symbolName = ct.Type.Name;
 
-                    if (refName != symbolName && refName.Equals(symbolName, StringComparison.InvariantCultureIgnoreCase))
+                    if (IsLetterCasingMismatch(refName, symbolName))
                     {
                         // Wrong class name case
-                        _diagnostics.Add(_routine, typeRef.PhpSyntax, ErrorCode.INF_ClassNameWrongCase, refName, symbolName);
+                        _diagnostics.Add(_routine, typeRef.PhpSyntax, ErrorCode.INF_TypeNameCaseMismatch, refName, symbolName);
                     }
                 }
             }
@@ -356,12 +399,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                 }
             }
 
-            // do not allow return from "finally" block, not allowed in CLR
-            if (x.PhpSyntax != null && IsInScope(Scope.Kind.Finally))
-            {
-                _diagnostics.Add(_routine, x.PhpSyntax, ErrorCode.ERR_NotYetImplemented, "return from 'finally' block");
-            }
-
             //
             return base.VisitReturn(x);
         }
@@ -416,9 +453,40 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
         public override T VisitInclude(BoundIncludeEx x)
         {
             // check arguments
-            return base.VisitRoutineCall(x);
+            base.VisitRoutineCall(x);
 
-            // do not check the TargetMethod
+            // check the target was not resolved
+            if (x.TargetMethod == null)
+            {
+                foreach (var arg in x.ArgumentsInSourceOrder)
+                {
+                    // in case the include is in form (__DIR__ . LITERAL)
+                    // it should get resolved
+                    if (arg.Value is BoundConcatEx concat &&
+                        concat.ArgumentsInSourceOrder.Length == 2 &&
+                        concat.ArgumentsInSourceOrder[0].Value is BoundPseudoConst pc &&
+                        pc.ConstType == PseudoConstUse.Types.Dir &&
+                        concat.ArgumentsInSourceOrder[1].Value.ConstantValue.TryConvertToString(out var relativePath) &&
+                        relativePath.Length != 0)
+                    {
+                        // WARNING: Script file '{0}' could not be resolved
+                        if (_routine != null)
+                        {
+                            relativePath = PhpFileUtilities.NormalizeSlashes(_routine.ContainingFile.DirectoryRelativePath + relativePath);
+
+                            if (Roslyn.Utilities.PathUtilities.IsAnyDirectorySeparator(relativePath[0]))
+                            {
+                                relativePath = relativePath.Substring(1); // trim leading slash
+                            }
+
+                            _diagnostics.Add(_routine, concat.PhpSyntax ?? x.PhpSyntax, ErrorCode.WRN_CannotIncludeFile, relativePath);
+                        }
+                    }
+                }
+            }
+
+            //
+            return default;
         }
 
         protected override T VisitRoutineCall(BoundRoutineCall x)
@@ -475,6 +543,25 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             return default;
         }
 
+        //public override T VisitArgument(BoundArgument x)
+        //{
+        //    base.VisitArgument(x);
+
+        //    if (!x.Value.TypeRefMask.IsRef && NOT PASSED BY REF) // if value is referenced, we dunno
+        //    {
+        //        // argument should not be 'void' (NULL in PHP)
+        //        if ((x.Type != null && x.Type.SpecialType == SpecialType.System_Void) ||
+        //            x.Value.TypeRefMask.IsVoid(TypeCtx))
+        //        {
+        //            // WRN: Argument has no value, parameter will be always NULL
+        //            _diagnostics.Add(_routine, x.Value.PhpSyntax, ErrorCode.WRN_ArgumentVoid);
+        //        }
+        //    }
+
+        //    //
+        //    return default;
+        //}
+
         public override T VisitGlobalFunctionCall(BoundGlobalFunctionCall x)
         {
             CheckUndefinedFunctionCall(x);
@@ -483,7 +570,7 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             if (x.Name.IsDirect)
             {
                 CheckObsoleteSymbol(x.PhpSyntax, x.TargetMethod, isMemberCall: false);
-                CheckGlobalFunctionUsage(x);
+                CheckGlobalFunctionCall(x);
             }
             else
             {
@@ -524,6 +611,16 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
                 CheckMissusedPrimitiveType(x.ContainingType);
             }
 
+            if (x.Access.IsWrite && ((Microsoft.CodeAnalysis.Operations.IMemberReferenceOperation)x).Member is PropertySymbol prop && prop.SetMethod == null)
+            {
+                // read-only property written
+                _diagnostics.Add(_routine, GetMemberNameSpanForDiagnostic(x.PhpSyntax),
+                    ErrorCode.ERR_ReadOnlyPropertyWritten,
+                    prop.ContainingType.PhpQualifiedName().ToString(),  // TOOD: _statics
+                    prop.Name);
+            }
+
+            //
             return base.VisitFieldRef(x);
         }
 
@@ -572,15 +669,6 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
         public override T VisitVariableRef(BoundVariableRef x)
         {
             CheckUninitializedVariableUse(x);
-
-            if (x.Access.IsWrite || x.Access.IsUnset)
-            {
-                // assignment to $this is not allowed:
-                if (x.Variable is ThisVariableReference)
-                {
-                    _diagnostics.Add(_routine, x.PhpSyntax, ErrorCode.ERR_CannotAssignToThis);
-                }
-            }
 
             return base.VisitVariableRef(x);
         }
@@ -749,36 +837,48 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
 
         static string GetMemberNameForDiagnostic(Symbol target, bool isMemberName)
         {
-            string name = target.Name;
+            string name = target.PhpName();
 
             if (isMemberName)
             {
-                var qname = target.ContainingType.PhpQualifiedName();
+                var qname = target.ContainingType.PhpQualifiedName();   // TOOD: _statics
                 name = qname.ToString(new Name(name), false);
             }
 
             return name;
         }
 
-        void CheckObsoleteSymbol(LangElement node, Symbol target, bool isMemberCall)
+        static TextSpan GetMemberNameSpanForDiagnostic(LangElement node)
+        {
+            if (node is FunctionCall fnc)
+            {
+                return fnc.NameSpan.ToTextSpan();
+            }
+            else
+            {
+                return node.Span.ToTextSpan();
+            }
+        }
+
+        void CheckObsoleteSymbol(LangElement syntax, Symbol target, bool isMemberCall)
         {
             var obsolete = target?.ObsoleteAttributeData;
             if (obsolete != null)
             {
-                _diagnostics.Add(_routine, node, ErrorCode.WRN_SymbolDeprecated, target.Kind.ToString(), GetMemberNameForDiagnostic(target, isMemberCall), obsolete.Message);
+                _diagnostics.Add(_routine, GetMemberNameSpanForDiagnostic(syntax), ErrorCode.WRN_SymbolDeprecated, target.Kind.ToString(), GetMemberNameForDiagnostic(target, isMemberCall), obsolete.Message);
             }
         }
 
         private void CheckUndefinedFunctionCall(BoundGlobalFunctionCall x)
         {
-            if (x.Name.IsDirect && x.TargetMethod.IsErrorMethodOrNull())
+            if (x.Name.IsDirect &&
+                x.TargetMethod is ErrorMethodSymbol errmethod && errmethod.ErrorKind == ErrorMethodKind.Missing)
             {
-                var errmethod = (ErrorMethodSymbol)x.TargetMethod;
-                if (errmethod != null && errmethod.ErrorKind == ErrorMethodKind.Missing)
-                {
-                    var span = x.PhpSyntax is FunctionCall fnc ? fnc.NameSpan : x.PhpSyntax.Span;
-                    _diagnostics.Add(_routine, span.ToTextSpan(), ErrorCode.WRN_UndefinedFunctionCall, x.Name.NameValue.ToString());
-                }
+                var originalName = (x.PhpSyntax is DirectFcnCall fnc)
+                    ? fnc.FullName.OriginalName
+                    : x.Name.NameValue;
+
+                _diagnostics.Add(_routine, GetMemberNameSpanForDiagnostic(x.PhpSyntax), ErrorCode.WRN_UndefinedFunctionCall, originalName.ToString());
             }
         }
 
@@ -840,101 +940,14 @@ namespace Pchp.CodeAnalysis.FlowAnalysis.Passes
             }
         }
 
-        private void CheckGlobalFunctionUsage(BoundGlobalFunctionCall call)
-        {
-            if (!AnalysisFacts.HasSimpleName(call, out string name))
-            {
-                return;
-            }
-
-            switch (name)
-            {
-                case "printf":
-                case "sprintf":
-                    // Check that the number of arguments matches the format string
-                    if (!call.ArgumentsInSourceOrder.IsEmpty && call.ArgumentsInSourceOrder[0].Value.ConstantValue.TryConvertToString(out string format))
-                    {
-                        int posSpecCount = 0;
-                        int numSpecMax = 0;
-                        foreach (Match match in PrintfSpecsRegex.Matches(format))
-                        {
-                            var numSpecStr = match.Groups[1].Value;
-                            if (numSpecStr == string.Empty)
-                            {
-                                // %d
-                                posSpecCount++;
-                            }
-                            else
-                            {
-                                // %2$d
-                                int numSpec = int.Parse(numSpecStr);
-                                numSpecMax = Math.Max(numSpec, numSpecMax);
-                            }
-                        }
-
-                        int expectedArgCount = 1 + Math.Max(posSpecCount, numSpecMax);
-
-                        if (call.ArgumentsInSourceOrder.Length != expectedArgCount)
-                        {
-                            // Wrong number of arguments with respect to the format string
-                            _diagnostics.Add(_routine, call.PhpSyntax, ErrorCode.WRN_FormatStringWrongArgCount, name);
-                        }
-                    }
-                    break;
-            }
-        }
-
         public override T VisitCFGTryCatchEdge(TryCatchEdge x)
         {
-            // remember scopes,
-            // .Accept() on BodyBlocks traverses not only the try block but also the rest of the code
-
-            WithScope(new Scope
-            {
-                ScopeKind = Scope.Kind.Try,
-                From = x.BodyBlock.Ordinal,
-                To = x.NextBlock.Ordinal
-            });
-
-            for (int i = 0; i < x.CatchBlocks.Length; i++)
-            {
-                WithScope(new Scope
-                {
-                    ScopeKind = Scope.Kind.Catch,
-                    From = x.CatchBlocks[i].Ordinal,
-                    To = ((i + 1 < x.CatchBlocks.Length) ? x.CatchBlocks[i + 1] : x.FinallyBlock ?? x.NextBlock).Ordinal,
-                });
-            }
-
-            if (x.FinallyBlock != null)
-            {
-                WithScope(new Scope
-                {
-                    ScopeKind = Scope.Kind.Finally,
-                    From = x.FinallyBlock.Ordinal,
-                    To = x.NextBlock.Ordinal
-                });
-            }
-
-            // visit:
-
             return base.VisitCFGTryCatchEdge(x);
         }
 
         public override T VisitStaticStatement(BoundStaticVariableStatement x)
         {
             return base.VisitStaticStatement(x);
-        }
-
-        public override T VisitYieldStatement(BoundYieldStatement boundYieldStatement)
-        {
-            if (IsInTryCatchScope())
-            {
-                // TODO: Start supporting yielding from exception handling constructs.
-                _diagnostics.Add(_routine, boundYieldStatement.PhpSyntax, ErrorCode.ERR_NotYetImplemented, "Yielding from an exception handling construct (try, catch, finally)");
-            }
-
-            return default;
         }
 
         public override T VisitCFGForeachEnumereeEdge(ForeachEnumereeEdge x)

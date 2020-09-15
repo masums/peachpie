@@ -89,39 +89,39 @@ namespace Pchp.CodeAnalysis.Symbols
         readonly PhpCompilation _compilation;
 
         /// <summary>
-        /// Name of attribute class representing an extension library.
+        /// Root namespace for Peachpie Runtime types.
         /// </summary>
-        public const string PhpExtensionAttributeFullName = "Pchp.Core.PhpExtensionAttribute";
+        public const string PeachpieRuntimeNamespace = "Pchp.Core";
 
         /// <summary>
-        /// Name of attribute <c>PhpRwAttribute</c> class.
+        /// Name of attribute class representing an extension library.
         /// </summary>
-        public const string PhpRwAttributeFullName = "Pchp.Core.PhpRwAttribute";
+        public const string PhpExtensionAttributeFullName = PeachpieRuntimeNamespace + ".PhpExtensionAttribute";
 
         /// <summary>
         /// Name of attribute class representing a PHP type descriptor.
         /// </summary>
-        public const string PhpTypeAttributeFullName = "Pchp.Core.PhpTypeAttribute";
+        public const string PhpTypeAttributeFullName = PeachpieRuntimeNamespace + ".PhpTypeAttribute";
 
         /// <summary>
         /// Name of attribute class representing a script type.
         /// </summary>
-        public const string PhpScriptAttributeFullName = "Pchp.Core.ScriptAttribute";
+        public const string PhpScriptAttributeFullName = PeachpieRuntimeNamespace + ".ScriptAttribute";
 
         /// <summary>
         /// Name of attribute class representing a PHAR archive script type.
         /// </summary>
-        public const string PharAttributeFullName = "Pchp.Core.PharAttribute";
+        public const string PharAttributeFullName = PeachpieRuntimeNamespace + ".PharAttribute";
 
         /// <summary>
         /// Name of attribute class representing target PHP language specification.
         /// </summary>
-        public const string TargetPhpLanguageAttributeFullName = "Pchp.Core.TargetPhpLanguageAttribute";
+        public const string TargetPhpLanguageAttributeFullName = PeachpieRuntimeNamespace + ".TargetPhpLanguageAttribute";
 
         /// <summary>
         /// Full name of Context+DllLoader&lt;&gt;.
         /// </summary>
-        public const string Context_DllLoader_T = "Pchp.Core.Context+DllLoader`1";
+        public const string Context_DllLoader_T = PeachpieRuntimeNamespace + ".Context+DllLoader`1";
 
         /// <summary>
         /// Name of attribute class annotating trait declaration.
@@ -139,18 +139,19 @@ namespace Pchp.CodeAnalysis.Symbols
         public const string PhpMemberVisibilityAttributeName = "PhpMemberVisibilityAttribute";
 
         public readonly CoreType
-            Context, Operators, Convert, Comparison, StrictComparison, PhpException,
+            Context, Operators, Convert, StrictConvert, Comparison, StrictComparison, PhpException,
             ScriptAttribute, PhpTraitAttribute, PharAttribute, PhpTypeAttribute, PhpHiddenAttribute, PhpFieldsOnlyCtorAttribute, NotNullAttribute, DefaultValueAttribute, PhpMemberVisibilityAttribute, PhpStaticLocalAttribute,
             ScriptDiedException,
             IStaticInit, RoutineInfo, IndirectLocal,
             BinderFactory, GetClassConstBinder, GetFieldBinder, SetFieldBinder, AccessMask,
-            Dynamic_NameParam_T, Dynamic_TargetTypeParam, Dynamic_CallerTypeParam, Dynamic_UnpackingParam_T,
+            Dynamic_NameParam_T, Dynamic_TargetTypeParam, Dynamic_LateStaticTypeParam, Dynamic_CallerTypeParam, Dynamic_UnpackingParam_T,
+            RuntimeChain_ChainEnd, RuntimeChain_Value_T, RuntimeChain_Property_T, RuntimeChain_ArrayItem_T, RuntimeChain_ArrayNewItem_T,
             PhpTypeInfoExtension, PhpTypeInfo, CommonPhpArrayKeys,
             PhpNumber, PhpValue, PhpAlias, PhpString, PhpArray, PhpResource, IPhpArray, IPhpEnumerable, IPhpCallable, IPhpConvertible, PhpString_Blob,
-            IntStringKey, PhpHashtable, QueryValue_T, QueryValue_DummyFieldsOnlyCtor,
-            Void, Object, Int32, Long, Double, Boolean, String, Exception,
+            IntStringKey, PhpHashtable, ImportValueAttribute, DummyFieldsOnlyCtor,
+            Void, Object, Byte, Int32, Long, Double, Boolean, String, Exception,
             RuntimeTypeHandle, RuntimeMethodHandle,
-            stdClass, ArrayAccess, Closure, Generator, Iterator, Traversable, GeneratorStateMachineDelegate, MainDelegate, IntPtr;
+            stdClass, ArrayAccess, Closure, Generator, Iterator, Traversable, Stringable, GeneratorStateMachineDelegate, MainDelegate, IntPtr;
 
         public CoreTypes(PhpCompilation compilation)
         {
@@ -160,6 +161,7 @@ namespace Pchp.CodeAnalysis.Symbols
 
             Void = Create(SpecialType.System_Void);
             Object = Create(SpecialType.System_Object);
+            Byte = Create(SpecialType.System_Byte);
             Int32 = Create(SpecialType.System_Int32);
             Long = Create(SpecialType.System_Int64);
             Double = Create(SpecialType.System_Double);
@@ -182,20 +184,21 @@ namespace Pchp.CodeAnalysis.Symbols
             PhpString_Blob = Create("PhpString+Blob");
             IntStringKey = Create("IntStringKey");
             PhpHashtable = Create("PhpHashtable");
-            QueryValue_T = Create("QueryValue`1");
-            QueryValue_DummyFieldsOnlyCtor = Create("QueryValue.DummyFieldsOnlyCtor");
             ScriptDiedException = Create("ScriptDiedException");
             Context = Create("Context");
             Operators = Create("Operators");
             Comparison = Create("Comparison");
             StrictComparison = Create("StrictComparison");
             Convert = Create("Convert");
+            StrictConvert = Create("StrictConvert");
             PhpException = Create("PhpException");
             ScriptAttribute = Create("ScriptAttribute");
             PhpTraitAttribute = Create(PhpTraitAttributeName);
             PharAttribute = Create("PharAttribute");
             PhpTypeAttribute = Create("PhpTypeAttribute");
             PhpHiddenAttribute = Create("PhpHiddenAttribute");
+            ImportValueAttribute = Create("ImportValueAttribute");
+            DummyFieldsOnlyCtor = Create("DummyFieldsOnlyCtor");
             PhpFieldsOnlyCtorAttribute = Create(PhpFieldsOnlyCtorAttributeName);
             NotNullAttribute = Create("NotNullAttribute");
             DefaultValueAttribute = Create("DefaultValueAttribute");
@@ -215,8 +218,15 @@ namespace Pchp.CodeAnalysis.Symbols
 
             Dynamic_NameParam_T = Create("Dynamic.NameParam`1");
             Dynamic_TargetTypeParam = Create("Dynamic.TargetTypeParam");
+            Dynamic_LateStaticTypeParam = Create("Dynamic.LateStaticTypeParam");
             Dynamic_CallerTypeParam = Create("Dynamic.CallerTypeParam");
             Dynamic_UnpackingParam_T = Create("Dynamic.UnpackingParam`1");
+
+            RuntimeChain_ChainEnd = Create("Dynamic.RuntimeChain.ChainEnd");
+            RuntimeChain_Value_T = Create("Dynamic.RuntimeChain.Value`1");
+            RuntimeChain_Property_T = Create("Dynamic.RuntimeChain.Property`1");
+            RuntimeChain_ArrayItem_T = Create("Dynamic.RuntimeChain.ArrayItem`1");
+            RuntimeChain_ArrayNewItem_T = Create("Dynamic.RuntimeChain.ArrayNewItem`1");
 
             PhpTypeInfoExtension = Create("Reflection.PhpTypeInfoExtension");
             PhpTypeInfo = Create("Reflection.PhpTypeInfo");
@@ -224,6 +234,7 @@ namespace Pchp.CodeAnalysis.Symbols
 
             Iterator = CreateFromFullName("Iterator");
             Traversable = CreateFromFullName("Traversable");
+            Stringable = CreateFromFullName("Stringable");
             Generator = CreateFromFullName("Generator");
             GeneratorStateMachineDelegate = CreateFromFullName("GeneratorStateMachineDelegate");
 
@@ -237,7 +248,7 @@ namespace Pchp.CodeAnalysis.Symbols
         readonly Dictionary<TypeSymbol, CoreType> _typetable = new Dictionary<TypeSymbol, CoreType>();
         //readonly Dictionary<SpecialType, CoreType> _specialTypes = new Dictionary<SpecialType, CoreType>();
 
-        CoreType Create(string name) => CreateFromFullName("Pchp.Core." + name);
+        CoreType Create(string name) => CreateFromFullName(PeachpieRuntimeNamespace + "." + name);
 
         CoreType Create(SpecialType type) => CreateFromFullName(SpecialTypes.GetMetadataName(type));
 
@@ -288,9 +299,10 @@ namespace Pchp.CodeAnalysis.Symbols
             {
                 if (t.Symbol == null)
                 {
+                    var fullname = t.FullName;
+
                     // nested types: todo: in Lookup
                     string nested = null;
-                    string fullname = t.FullName;
                     int plus = fullname.IndexOf('+');
                     if (plus > 0)
                     {
@@ -300,11 +312,18 @@ namespace Pchp.CodeAnalysis.Symbols
 
                     var mdname = MetadataTypeName.FromFullName(fullname, false);
                     var symbol = coreass.LookupTopLevelMetadataType(ref mdname, true);
-                    if (symbol != null && !symbol.IsErrorType())
+                    if (symbol.IsValidType())
                     {
                         if (nested != null)
                         {
-                            symbol = symbol.GetTypeMembers(nested).Single();
+                            symbol = symbol
+                                .GetTypeMembers(nested)
+                                .SingleOrDefault();
+
+                            if (symbol == null)
+                            {
+                                continue;
+                            }
                         }
 
                         _typetable[symbol] = t;

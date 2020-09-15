@@ -16,19 +16,22 @@ namespace Peachpie.AspNetCore.Web
     /// </summary>
     sealed class SynchronizedTextWriter : TextWriter
     {
+
         HttpResponse HttpResponse { get; }
 
         public override Encoding Encoding { get; }
 
         /// <summary>Temporary buffer for encoded single-character.</summary>
-        readonly byte[] _encodedCharBuffer;
+        byte[] _encodedCharBuffer;
+
+#if NETSTANDARD2_0
+        readonly char[] _charBuffer = new char[1];
+#endif
 
         public SynchronizedTextWriter(HttpResponse response, Encoding encoding)
         {
             HttpResponse = response ?? throw new ArgumentNullException(nameof(response));
             Encoding = encoding ?? throw new ArgumentNullException(nameof(encoding));
-
-            _encodedCharBuffer = new byte[GetEncodingMaxByteSize(encoding)];
         }
 
         const int UTF8MaxByteLength = 6;
@@ -51,12 +54,18 @@ namespace Peachpie.AspNetCore.Web
             Debug.Assert(buffer != null);
             Debug.Assert(count <= buffer.Length);
 
-            HttpResponse.Body.WriteAsync(new ReadOnlyMemory<byte>(buffer)); // NOTE: buffer is copied by the underlaying pipe
+#if NETSTANDARD2_0
+            HttpResponse.Body.WriteAsync(buffer, 0, count).GetAwaiter().GetResult();
+#else
+            HttpResponse.Body.WriteAsync(new ReadOnlyMemory<byte>(buffer, 0, count)).GetAwaiter().GetResult();
+#endif
         }
 
         public override void Write(string value)
         {
-            HttpResponse.WriteAsync(value, Encoding);   // NOTE: string is being encoded directly to the output stream
+            // TODO
+
+            HttpResponse.WriteAsync(value, Encoding).GetAwaiter().GetResult();
         }
 
         public override void Write(char[] chars, int index, int count)
@@ -70,24 +79,30 @@ namespace Peachpie.AspNetCore.Web
             //
 
             //
-            var encodedLength = Encoding.GetByteCount(chars);
+            var encodedLength = Encoding.GetByteCount(chars, index, count);
             var bytes = ArrayPool<byte>.Shared.Rent(encodedLength);
-            var nbytes = Encoding.GetBytes(chars, bytes); // == encodedLength
+            var nbytes = Encoding.GetBytes(chars, index, count, bytes, 0); // == encodedLength
 
             Write(bytes, nbytes);
 
             ArrayPool<byte>.Shared.Return(bytes);
         }
 
+
         public override void Write(char value)
         {
-            Span<char> chars = stackalloc char[1] { value };
-            // Span<byte> bytes = stackalloc byte[GetEncodingMaxByteSize(Encoding)];
+            _encodedCharBuffer ??= new byte[GetEncodingMaxByteSize(Encoding)];
 
+#if NETSTANDARD2_0
+            // encode the char
+            _charBuffer[0] = value;
+            var nbytes = Encoding.GetBytes(_charBuffer, 0, 1, _encodedCharBuffer, 0);
+#else
             // encode the char on stack
+            Span<char> chars = stackalloc char[1] { value };
             var nbytes = Encoding.GetBytes(chars, _encodedCharBuffer);
+#endif
 
-            //
             Write(_encodedCharBuffer, nbytes); // NOTE: _tmp is copied by the underlaying pipe
         }
 

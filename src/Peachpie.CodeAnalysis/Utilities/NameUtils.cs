@@ -358,9 +358,13 @@ namespace Pchp.CodeAnalysis
             public static QualifiedName Closure { get { return new QualifiedName(new Name("Closure")); } }
             public static QualifiedName Exception { get { return new QualifiedName(new Name("Exception")); } }
             public static QualifiedName stdClass { get { return new QualifiedName(new Name("stdClass")); } }
+            public static QualifiedName Stringable { get { return new QualifiedName(new Name("Stringable")); } }
 
+            public static QualifiedName System => new QualifiedName(new Name("System"));
             public static QualifiedName System_Object => new QualifiedName(new Name("Object"), new[] { new Name("System") });
             public static QualifiedName System_DateTime => new QualifiedName(new Name("DateTime"), new[] { new Name("System") });
+
+            public static QualifiedName UnhandledMatchError => new QualifiedName(new Name("UnhandledMatchError"), Name.EmptyNames, true);
 
             public static Name offsetGet { get { return new Name("offsetGet"); } }
             public static Name offsetSet { get { return new Name("offsetSet"); } }
@@ -390,6 +394,12 @@ namespace Pchp.CodeAnalysis
             public static QualifiedName ini_get = new QualifiedName(new Name("ini_get"));
 
             public static QualifiedName extension_loaded = new QualifiedName(new Name("extension_loaded"));
+
+            /// <summary><c>define</c> function name.</summary>
+            public static QualifiedName define = new QualifiedName(new Name("define"));
+
+            /// <summary><c>ord</c> function name.</summary>
+            public static QualifiedName ord = new QualifiedName(new Name("ord"));
         }
     }
 }

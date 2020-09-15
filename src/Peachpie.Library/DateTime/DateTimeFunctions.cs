@@ -11,6 +11,7 @@ using System.IO;
 
 namespace Pchp.Library.DateTime
 {
+    [PhpExtension("date")]
     public static class DateTimeFunctions
     {
         /// <summary>
@@ -59,13 +60,17 @@ namespace Pchp.Library.DateTime
 
         public const string DATE_RFC3339 = @"Y-m-d\TH:i:sP";
 
-        public const string DATE_RSS = @"D, d M Y H:i:s T";
+        public const string DATE_RFC7231 = @"D, d M Y H:i:s \G\M\T";
 
-        public const string DATE_W3C = @"Y-m-d\TH:i:sO";
+        public const string DATE_RFC3339_EXTENDED = @"Y-m-d\TH:i:s.vP";
+
+        public const string DATE_RSS = @"D, d M Y H:i:s O";
+
+        public const string DATE_W3C = @"Y-m-d\TH:i:sP";
 
         #endregion
 
-        #region date_format, date_create, date_create_immutable, date_offset_get, date_modify, date_add, date_sub, date_diff, date_timestamp_set
+        #region date_format, date_create, date_create_immutable, date_offset_get, date_modify, date_add, date_sub, date_diff, date_timestamp_set, date_timestamp_get
 
         [return: CastToFalse]
         public static string date_format(DateTime datetime, string format)
@@ -121,6 +126,20 @@ namespace Pchp.Library.DateTime
         }
 
         /// <summary>
+        /// Returns new <see cref="DateTimeImmutable"/> object formatted according to the specified format.
+        /// </summary>
+        /// <param name="ctx"><see cref="ScriptContext"/> reference.</param>
+        /// <param name="format">The format that the passed in string should be in.</param>
+        /// <param name="time">String representing the time.</param>
+        /// <param name="timezone">A DateTimeZone object representing the desired time zone.</param>
+        /// <returns></returns>
+        [return: CastToFalse]
+        public static DateTimeImmutable date_create_immutable_from_format(Context/*!*/ctx, string format, string time, DateTimeZone timezone = null)
+        {
+            return DateTimeImmutable.createFromFormat(ctx, format, time, timezone);
+        }
+
+        /// <summary>
         /// Alias of DateTime::getOffset().
         /// </summary>
         [return: CastToFalse]
@@ -156,12 +175,25 @@ namespace Pchp.Library.DateTime
         //[return:CastToFalse]
         public static DateTime date_sub(DateTime @object, DateInterval interval) => @object.sub(interval);
 
-        static System_DateTime TimeFromInterface(this DateTimeInterface dti)
+        internal static bool GetDateTimeFromInterface(DateTimeInterface dti, out System_DateTime datetime, out TimeZoneInfo timezone)
         {
-            if (dti is Library.DateTime.DateTime dt) return dt.Time;
-            if (dti is DateTimeImmutable dtimmutable) return dtimmutable.Time;
+            if (dti is Library.DateTime.DateTime dt)
+            {
+                datetime = dt.Time;
+                timezone = dt.TimeZone;
+                return true;
+            }
 
-            throw new ArgumentException();
+            if (dti is DateTimeImmutable dtimmutable)
+            {
+                datetime = dtimmutable.Time;
+                timezone = dtimmutable.TimeZone;
+                return true;
+            }
+
+            datetime = default;
+            timezone = default;
+            return false;
         }
 
         /// <summary>
@@ -170,17 +202,21 @@ namespace Pchp.Library.DateTime
         [return: NotNull]
         public static DateInterval date_diff(DateTimeInterface datetime1, DateTimeInterface datetime2, bool absolute = false)
         {
-            var interval = new DateInterval(TimeFromInterface(datetime1) - TimeFromInterface(datetime2));
-
-            // doc: If the DateInterval object was created by DateTime::diff(), then this is the total number of days between the start and end dates. 
-            interval.days = (PhpValue)interval.d;
-
-            if (absolute)
+            if (GetDateTimeFromInterface(datetime1, out var dt1, out _) &&
+                GetDateTimeFromInterface(datetime2, out var dt2, out _))
             {
-                interval.invert = 0;
-            }
+                var interval = new DateInterval(dt1, dt2);
+                if (absolute)
+                {
+                    interval.invert = 0;
+                }
 
-            return interval;
+                return interval;
+            }
+            else
+            {
+                throw new Spl.InvalidArgumentException();
+            }
         }
 
         /// <summary>
@@ -188,6 +224,33 @@ namespace Pchp.Library.DateTime
         /// </summary>
         /// <returns>Returns the <see cref="DateTime"/> object for method chaining.</returns>
         public static DateTime date_timestamp_set(DateTime @object, long unixtimestamp) => @object.setTimestamp(unixtimestamp);
+
+        /// <summary>
+        /// Gets the date and time as Unix timestamp.
+        /// </summary>
+        public static long date_timestamp_get(DateTime @object) => @object.getTimestamp();
+
+        #endregion
+
+        #region
+
+        /// <summary>
+        /// Alias to <see cref="DateTime.setTime"/>.
+        /// </summary>
+        public static DateTime date_time_set(DateTime @object, int hour, int minute, int second)
+            => @object.setTime(hour, minute, second);
+
+        /// <summary>
+        /// Alias to <see cref="DateTime.setDate"/>.
+        /// </summary>
+        public static DateTime date_date_set(DateTime @object, int year, int month, int day)
+            => @object.setDate(year, month, day);
+
+        /// <summary>
+        /// Alias to <see cref="DateTime.setISODate"/>.
+        /// </summary>
+        public static DateTime date_isodate_set(DateTime @object, int year, int week, int day = 1)
+            => @object.setISODate(year, week, day);
 
         #endregion
 
@@ -363,14 +426,16 @@ namespace Pchp.Library.DateTime
         {
             Debug.Assert(zone != null);
 
-            if (format == null)
+            if (string.IsNullOrEmpty(format))
+            {
                 return string.Empty;
+            }
 
             var local = TimeZoneInfo.ConvertTime(utc, zone);
 
             // here we are creating output string
-            StringBuilder result = new StringBuilder();
             bool escape = false;
+            var result = StringBuilderUtilities.Pool.Get();
 
             foreach (char ch in format)
             {
@@ -607,7 +672,7 @@ namespace Pchp.Library.DateTime
             if (escape)
                 result.Append('\\');
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -670,12 +735,32 @@ namespace Pchp.Library.DateTime
 
         #endregion
 
-        #region date_interval_create_from_date_string
+        #region date_interval_create_from_date_string, date_interval_format
 
         /// <summary>
         /// Alias of <see cref="DateInterval.createFromDateString(string)"/>.
         /// </summary>
         public static DateInterval date_interval_create_from_date_string(string time) => DateInterval.createFromDateString(time);
+
+        /// <summary>
+        /// Alias to <see cref="DateInterval.format"/>.
+        /// </summary>
+        [return: NotNull]
+        public static string date_interval_format(DateInterval @object, string format) => @object.format(format);
+
+        #endregion
+
+        #region date_parse_from_format
+
+        /// <summary>
+        /// Get info about given date formatted according to the specified format.
+        /// </summary>
+        [return: NotNull]
+        public static PhpArray date_parse_from_format(Context ctx, string format, string date)
+        {
+            var dateinfo = DateInfo.ParseFromFormat(format, date, out var errors);
+            return AsArray(ctx, dateinfo, errors);
+        }
 
         #endregion
 
@@ -733,12 +818,12 @@ namespace Pchp.Library.DateTime
         private static string FormatTime(Context ctx, string format, System.DateTime utc, TimeZoneInfo/*!*/ zone)
         {
             // Possibly bug in framework? "h" and "hh" just after midnight shows 12, not 0
-            if (format == null) return "";
+            if (string.IsNullOrEmpty(format)) return string.Empty;
 
             var local = TimeZoneInfo.ConvertTime(utc, zone);// zone.ToLocalTime(utc);
             var info = Locale.GetCulture(ctx, Locale.Category.Time).DateTimeFormat;
 
-            StringBuilder result = new StringBuilder();
+            var result = StringBuilderUtilities.Pool.Get();
 
             bool specialChar = false;
 
@@ -950,7 +1035,7 @@ namespace Pchp.Library.DateTime
             if (specialChar)
                 result.Append('%');
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         #endregion
@@ -1448,7 +1533,7 @@ namespace Pchp.Library.DateTime
 
         #endregion
 
-        #region microtime
+        #region microtime, hrtime
 
         /// <summary>
         /// Returns the string "msec sec" where sec is the current time measured in the number of seconds
@@ -1467,14 +1552,14 @@ namespace Pchp.Library.DateTime
             TimeSpan mSec = fromUnixEpoch.Subtract(new TimeSpan(seconds * 10000000)); // convert seconds to 100 ns
             double remaining = ((double)mSec.Ticks) / 10000000; // convert from 100ns to seconds
 
-            return remaining.ToString("G", System.Globalization.NumberFormatInfo.InvariantInfo) + " " + seconds.ToString();
+            return remaining.ToString("G", NumberFormatInfo.InvariantInfo) + " " + seconds.ToString();
         }
 
         /// <summary>
         /// Returns the fractional time in seconds from the start of the UNIX epoch.
         /// </summary>
         /// <param name="returnDouble"><c>true</c> to return the double, <c>false</c> to return string.</param>
-        /// <returns><see cref="String"/> containing number of miliseconds, space and number of seconds
+        /// <returns><see cref="string"/> containing number of miliseconds, space and number of seconds
         /// if <paramref name="returnDouble"/> is <c>false</c> and <see cref="double"/>
         /// containing the fractional count of seconds otherwise.</returns>
         public static PhpValue microtime(bool returnDouble)
@@ -1483,6 +1568,39 @@ namespace Pchp.Library.DateTime
                 return PhpValue.Create((System_DateTime.UtcNow - DateTimeUtils.UtcStartOfUnixEpoch).TotalSeconds);
             else
                 return PhpValue.Create(microtime());
+        }
+
+        /// <summary>
+        /// Get the system's high resolution time.
+        /// </summary>
+        /// <param name="get_as_number">
+        /// Whether the high resolution time should be returned as array or number.
+        /// Default is to return the value as array.
+        /// </param>
+        /// <returns>
+        /// Returns nanoseconds of internal system counter.
+        /// If <paramref name="get_as_number"/> is <c>false</c>, the return value is split to array <code>[seconds, nanoseconds]</code>.
+        /// </returns>
+        /// <remarks>Internally the function uses <see cref="Stopwatch"/> which depends on the current platform implementation.</remarks>
+        public static PhpValue hrtime(bool get_as_number = false)
+        {
+            var ticks = Stopwatch.GetTimestamp();
+
+            const long ns = 1_000_000_000;
+
+            // convert ticks to nanoseconds
+            var seconds = ticks / Stopwatch.Frequency;
+            var nanoseconds = (ticks - (seconds * Stopwatch.Frequency)) * ns / Stopwatch.Frequency;
+
+            if (get_as_number)
+            {
+                return seconds * ns + nanoseconds;
+            }
+            else
+            {
+                // [seconds, nanoseconds]
+                return new PhpArray(2) { seconds, nanoseconds };
+            }
         }
 
         #endregion
@@ -1526,38 +1644,41 @@ namespace Pchp.Library.DateTime
                 return -1;  // FALSE
             }
 
-            var result = DateInfo.Parse(ctx, time.Trim(), startUtc, out var error);
-            if (error != null)
+            var result = DateInfo.Parse(ctx, time.Trim(), startUtc, timeZone: null, out var error);
+            if (error == null)
+            {
+                return DateTimeUtils.UtcToUnixTimeStamp(result);
+            }
+            else
             {
                 PhpException.Throw(PhpError.Warning, error);
                 return -1;  // FALSE
             }
-
-            //
-            return result;
         }
 
         /// <summary>
         /// Returns associative array with detailed info about given date.
         /// </summary>
         /// <returns>Returns array with information about the parsed date on success.</returns>
-        //[return: CastToFalse]
+        [return: NotNull]
         public static PhpArray date_parse(Context ctx, string time)
         {
-            if (time == null) return null;
-            time = time.Trim();
-            if (time.Length == 0) return null;
+            DateTimeErrors errors = null;
+
+            if (string.IsNullOrEmpty(time))
+            {
+                time = string.Empty;
+                DateTimeErrors.AddError(ref errors, Resources.DateResources.empty_string);
+            }
 
             //
-            var errors = PhpArray.NewEmpty();
-
             var scanner = new Scanner(new StringReader(time.ToLowerInvariant()));
             while (true)
             {
                 var token = scanner.GetNextToken();
                 if (token == Tokens.ERROR || scanner.Errors > 0)
                 {
-                    errors.Add(string.Format(Resources.LibResources.parse_error, scanner.Position.ToString(), time.Substring(scanner.Position)));
+                    DateTimeErrors.AddError(ref errors, string.Format(Resources.LibResources.parse_error, scanner.Position.ToString(), time.Substring(scanner.Position)));
                     break;
                 }
 
@@ -1568,38 +1689,55 @@ namespace Pchp.Library.DateTime
             }
 
             //
-            var dateinfo = scanner.Time;
-            var datetime = dateinfo.GetDateTime(ctx, System_DateTime.UtcNow);
+            return AsArray(ctx, scanner.Time, errors);
+        }
 
-            var result = new PhpArray(12);
+        static PhpArray AsArray(Context ctx, DateInfo dateinfo, DateTimeErrors errors)
+        {
+            var timezone = dateinfo.ResolveTimeZone(ctx, null);
+            var datetime = dateinfo.GetDateTime(ctx, System_DateTime.UtcNow);   // gets UTC time!
+
+            var localtime = TimeZoneInfo.ConvertTimeFromUtc(datetime, timezone);
+
+            var result = new PhpArray(16);
             //[year] => 2006
-            result["year"] = dateinfo.have_date != 0 ? (PhpValue)datetime.Year : PhpValue.False;
+            result["year"] = dateinfo.y >= 0 ? (PhpValue)localtime.Year : PhpValue.False;
             //[month] => 12
-            result["month"] = dateinfo.have_date != 0 ? (PhpValue)datetime.Month : PhpValue.False;
+            result["month"] = dateinfo.m >= 0 ? (PhpValue)localtime.Month : PhpValue.False;
             //[day] => 12
-            result["day"] = dateinfo.have_date != 0 ? (PhpValue)datetime.Day : PhpValue.False;
+            result["day"] = dateinfo.d >= 0 ? (PhpValue)localtime.Day : PhpValue.False;
             //[hour] => 10
-            result["hour"] = dateinfo.have_time != 0 ? (PhpValue)datetime.Hour : PhpValue.False;
+            result["hour"] = dateinfo.h >= 0 ? (PhpValue)localtime.Hour : PhpValue.False;
             //[minute] => 0
-            result["minute"] = dateinfo.have_time != 0 ? (PhpValue)datetime.Minute : PhpValue.False;
+            result["minute"] = dateinfo.i >= 0 ? (PhpValue)localtime.Minute : PhpValue.False;
             //[second] => 0
-            result["second"] = dateinfo.have_time != 0 ? (PhpValue)datetime.Second : PhpValue.False;
+            result["second"] = dateinfo.s >= 0 ? (PhpValue)localtime.Second : PhpValue.False;
             //[fraction] => 0.5
-            result["fraction"] = dateinfo.have_time != 0 ? (PhpValue)dateinfo.f : PhpValue.False;
+            result["fraction"] = dateinfo.have_time != 0 ? (PhpValue)dateinfo.f : 0;
             //[warning_count] => 0
-            result["warning_count"] = (PhpValue)0;
+            result["warning_count"] = errors != null && errors.Warnings != null ? errors.Warnings.Count : 0;
             //[warnings] => Array()
-            result["warnings"] = (PhpValue)PhpArray.NewEmpty();
+            result["warnings"] = errors != null && errors.Warnings != null ? new PhpArray(errors.Warnings) : PhpArray.NewEmpty();
             //[error_count] => 0
-            result["error_count"] = (PhpValue)errors.Count;
+            result["error_count"] = errors != null && errors.Errors != null ? errors.Errors.Count : 0;
             //[errors] => Array()
-            result["errors"] = (PhpValue)errors;
+            result["errors"] = errors != null && errors.Errors != null ? new PhpArray(errors.Errors) : PhpArray.NewEmpty();
             //[is_localtime] => 
-            result["is_localtime"] = (PhpValue)(false); // ???
+            result["is_localtime"] = dateinfo.have_zone != 0; // ???
+
+            if (dateinfo.have_zone != 0)
+            {
+                // [zone_type] => 1
+                result["zone_type"] = DateInfo.GetTimeLibZoneType(timezone);
+                // [zone] => 37800
+                result["zone"] = dateinfo.z * 60; // seconds!
+                // [is_dst] => 
+                result["is_dst"] = timezone.IsDaylightSavingTime(localtime);
+            }
 
             if (dateinfo.have_relative != 0)
             {
-                result["relative"] = (PhpValue)new PhpArray(6)
+                result["relative"] = new PhpArray(6)
                 {
                     //[year] => 0
                     { "year", dateinfo.relative.y },
@@ -1613,6 +1751,8 @@ namespace Pchp.Library.DateTime
                     { "minute", dateinfo.relative.i },
                     //[second] => 0
                     { "second", dateinfo.relative.s },
+                    //[weekday] => 1
+                    { "weekday", dateinfo.have_weekday_relative != 0 ? dateinfo.relative.weekday : 0 },
                 };
             }
 

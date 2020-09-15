@@ -13,7 +13,8 @@ namespace Pchp.Library
 	/// Implements PHP mathematical functions and constants.
 	/// </summary>
 	/// <threadsafety static="true"/>
-	public static class PhpMath
+	[PhpExtension("standard")]
+    public static class PhpMath
     {
         #region Per-request Random Number Generators
 
@@ -48,12 +49,17 @@ namespace Pchp.Library
         public const double M_2_PI = 0.63661977236758134308;
         public const double M_SQRTPI = 1.77245385090551602729;
         public const double M_2_SQRTPI = 1.12837916709551257390;
+        /// <summary>sqrt(2)</summary>
+        public const double M_SQRT2 = 1.41421356237309504880;
         public const double M_SQRT3 = 1.73205080756887729352;
         public const double M_SQRT1_2 = 0.70710678118654752440;
         public const double M_LNPI = 1.14472988584940017414;
         public const double M_EULER = 0.57721566490153286061;
         public const double NAN = double.NaN;
         public const double INF = double.PositiveInfinity;
+
+        public const int MT_RAND_MT19937 = 0;
+        public const int MT_RAND_PHP = 1;
 
         #endregion
 
@@ -232,7 +238,7 @@ namespace Pchp.Library
             {
                 throw new ArgumentOutOfRangeException();
             }
-            
+
             // TODO: use mcrypt, int64
             return rand((int)min, (int)max);
         }
@@ -275,6 +281,15 @@ namespace Pchp.Library
         }
 
         /// <summary>
+        /// <see cref="mt_srand(int, MtMode)"/> mode.
+        /// </summary>
+        public enum MtMode : int
+        {
+            MT19937 = MT_RAND_MT19937,
+            PHP = MT_RAND_PHP,
+        }
+
+        /// <summary>
         /// Seed the better random number generator.
         /// No return value.
         /// </summary>
@@ -291,6 +306,22 @@ namespace Pchp.Library
         public static void mt_srand(int seed)
         {
             MTGenerator.Seed(unchecked((uint)seed));
+        }
+
+        /// <summary>
+        /// Seed the better random number generator.
+        /// No return value.
+        /// </summary>
+        /// <param name="seed">Optional seed value.</param>
+        /// <param name="mode">Seed algorithm implementation.</param>
+        public static void mt_srand(int seed, MtMode mode = MtMode.MT19937)
+        {
+            if (mode != MtMode.MT19937)
+            {
+                PhpException.ArgumentValueNotSupported(nameof(mode), mode.ToString());
+            }
+
+            mt_srand(seed);
         }
 
         #endregion
@@ -339,7 +370,7 @@ namespace Pchp.Library
         {
             // Trim the number to the lower 32 binary digits.
             uint temp = unchecked((uint)number);
-            return DoubleToBase(temp, 2);
+            return DoubleToBase(temp, 2) ?? "0";
         }
 
         ///// <summary>
@@ -445,16 +476,14 @@ namespace Pchp.Library
         {
             if (number == null)
             {
-                //PhpException.ArgumentNull("number");
-                //return 0.0;
-                throw new ArgumentException();
+                PhpException.ArgumentNull(nameof(number));
+                return 0.0;
             }
 
             if (fromBase < 2 || fromBase > 36)
             {
-                //PhpException.InvalidArgument("toBase", LibResources.GetString("arg_out_of_bounds"));
-                //return 0.0;
-                throw new ArgumentException();
+                PhpException.InvalidArgument(nameof(fromBase), Resources.Resources.arg_out_of_bounds);
+                return 0.0;
             }
 
             double fnum = 0;
@@ -462,7 +491,13 @@ namespace Pchp.Library
             {
                 int digit = Core.Convert.AlphaNumericToDigit(number[i]);
                 if (digit < fromBase)
+                {
                     fnum = fnum * fromBase + digit;
+                }
+                else
+                {
+                    // Warning ?
+                }
             }
 
             return fnum;
@@ -504,23 +539,25 @@ namespace Pchp.Library
         {
             if (toBase < 2 || toBase > 36)
             {
-                throw new NotImplementedException();
-                //PhpException.InvalidArgument("toBase", LibResources.GetString("arg_out_of_bounds"));
-                //return String.Empty;
+                PhpException.InvalidArgument(nameof(toBase), Resources.LibResources.arg_out_of_bounds);
+                return null; // FALSE
             }
 
             // Don't try to convert infinity or NaN:
-            if (Double.IsInfinity(number) || Double.IsNaN(number))
+            if (double.IsInfinity(number) || double.IsNaN(number))
             {
-                throw new NotImplementedException();
-                //PhpException.InvalidArgument("number", LibResources.GetString("arg_out_of_bounds"));
-                //return String.Empty;
+                PhpException.InvalidArgument(nameof(number), Resources.LibResources.arg_out_of_bounds);
+                return null; // FALSE
             }
 
             double fvalue = Math.Floor(number); /* floor it just in case */
-            if (Math.Abs(fvalue) < 1) return "0";
+            if (Math.Abs(fvalue) < 1)
+            {
+                return "0";
+            }
 
-            StringBuilder sb = new StringBuilder();
+            var sb = StringBuilderUtilities.Pool.Get();
+
             while (Math.Abs(fvalue) >= 1)
             {
                 double mod = fmod(fvalue, toBase);
@@ -531,7 +568,7 @@ namespace Pchp.Library
                 fvalue /= toBase;
             }
 
-            return Strings.strrev(sb.ToString());
+            return Core.Utilities.StringUtils.Reverse(StringBuilderUtilities.GetStringAndReturn(sb));
         }
 
         /// <summary>
@@ -550,29 +587,8 @@ namespace Pchp.Library
                 return "0";
             }
 
-            double value;
-
-            try
-            {
-                value = BaseToDouble(number, fromBase);
-            }
-            catch (ArgumentException)
-            {
-                //PhpException.Throw(PhpError.Warning, LibResources.GetString("arg_invalid_value", "fromBase", fromBase));
-                //return PhpValue.False;
-                throw new NotImplementedException();
-            }
-
-            try
-            {
-                return DoubleToBase(value, toBase);
-            }
-            catch (ArgumentException)
-            {
-                //PhpException.Throw(PhpError.Warning, LibResources.GetString("arg_invalid_value", "toBase", toBase));
-                //return PhpValue.False;
-                throw new NotImplementedException();
-            }
+            var value = BaseToDouble(number, fromBase);
+            return DoubleToBase(value, toBase);
         }
 
         #endregion
@@ -834,7 +850,7 @@ namespace Pchp.Library
 
         #endregion
 
-        #region  ceil, floor, round, abs, fmod, max, min
+        #region  ceil, floor, round, abs, fmod, max, min, intdiv, fdiv
 
         /// <summary>
         /// Returns the next highest integer value by rounding up <paramref name="x"/> if necessary.
@@ -1240,7 +1256,7 @@ namespace Pchp.Library
             }
             else
             {
-                ex = PhpValue.Void;
+                ex = PhpValue.Null;
             }
 
             enumerator.Dispose();
@@ -1248,6 +1264,18 @@ namespace Pchp.Library
             //
             return ex;
         }
+
+        /// <summary>
+        /// Returns the integer quotient of the <paramref name="dividend"/> of dividend by <paramref name="divisor"/>.
+        /// </summary>
+        /// <param name="dividend">Number to be divided.</param>
+        /// <param name="divisor">Number which divides the <paramref name="dividend"/>.</param>
+        public static long intdiv(long dividend, long divisor) => dividend / divisor;
+
+        /// <summary>
+        /// Perform floating-point division of <paramref name="dividend"/> / <paramref name="divisor"/> with IEEE-754 semantics for division by zero.
+        /// </summary>
+        public static double fdiv(double dividend, double divisor) => dividend / divisor; // does not throw, returns +INF, -INF
 
         #endregion
     }

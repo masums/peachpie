@@ -94,6 +94,7 @@ namespace Pchp.Library.Reflection
             //
             return PhpValue.False;
         }
+
         public PhpArray getConstants(Context ctx)
         {
             var result = new PhpArray();
@@ -102,6 +103,27 @@ namespace Pchp.Library.Reflection
                 result.Add(p.PropertyName, p.GetValue(ctx, null));
             }
             return result;
+        }
+
+        /// <summary>
+        /// Gets class constants.
+        /// </summary>
+        [return: NotNull]
+        public PhpArray getReflectionConstants()
+        {
+            var result = new PhpArray();
+            foreach (var p in _tinfo.GetDeclaredConstants())
+            {
+                result.Add(new ReflectionClassConstant(p));
+            }
+            return result;
+        }
+
+        [return: CastToFalse]
+        public ReflectionClassConstant getReflectionConstant(string name)
+        {
+            var p = _tinfo.GetDeclaredConstant(name);
+            return p != null ? new ReflectionClassConstant(p) : null;
         }
 
         /// <summary>
@@ -120,20 +142,31 @@ namespace Pchp.Library.Reflection
         [return: NotNull]
         public PhpArray getDefaultProperties(Context ctx)
         {
-            if (_tinfo.isInstantiable)
+            var tinfo = _tinfo;
+
+            if (tinfo.IsInterface)
             {
-                var inst = _tinfo.GetUninitializedInstance(ctx);
-                if (inst != null)
+                // interfaces cannot have properties:
+                return PhpArray.NewEmpty();
+            }
+            else if (tinfo.IsTrait && tinfo.Type.IsGenericTypeDefinition)
+            {
+                // construct the generic trait class with <object>
+                tinfo = tinfo.Type.MakeGenericType(typeof(object)).GetPhpTypeInfo();
+            }
+
+            // we have to instantiate the type to get the initial values:
+            var inst = tinfo.CreateUninitializedInstance(ctx);
+            if (inst != null)
+            {
+                var array = new PhpArray();
+
+                foreach (var p in tinfo.GetDeclaredProperties())
                 {
-                    var array = new PhpArray();
-
-                    foreach (var p in TypeMembersUtils.GetDeclaredProperties(_tinfo))
-                    {
-                        array[p.PropertyName] = p.GetValue(ctx, inst);
-                    }
-
-                    return array;
+                    array[p.PropertyName] = p.GetValue(ctx, inst);
                 }
+
+                return array;
             }
 
             //
@@ -141,24 +174,18 @@ namespace Pchp.Library.Reflection
         }
 
         [return: CastToFalse]
-        public string getDocComment() => null;
+        public string getDocComment() => ReflectionUtils.getDocComment(_tinfo.Type);
 
         public ReflectionExtension getExtension()
         {
-            var exts = _tinfo.Extensions;
-            return exts.Length != 0
-                ? new ReflectionExtension(exts[0])
+            var extensionName = _tinfo.ExtensionName;
+            return extensionName != null
+                ? new ReflectionExtension(extensionName)
                 : null; // NULL
         }
 
         [return: CastToFalse]
-        public string getExtensionName()
-        {
-            var exts = _tinfo.Extensions;
-            return exts.Length != 0
-                ? exts[0]
-                : null; // FALSE
-        }
+        public string getExtensionName() => _tinfo.ExtensionName; // null means FALSE
 
         /// <summary>Gets the filename of the file in which the class has been defined</summary>
         /// <param name="ctx">Current runtime context</param>
@@ -180,6 +207,9 @@ namespace Pchp.Library.Reflection
 
             foreach (var t in _tinfo.Type.ImplementedInterfaces)
             {
+                if (t.IsHiddenType())
+                    continue;
+
                 result.Add(t.GetPhpTypeInfo().Name);
             }
 
@@ -191,6 +221,9 @@ namespace Pchp.Library.Reflection
 
             foreach (var t in _tinfo.Type.ImplementedInterfaces)
             {
+                if (t.IsHiddenType())
+                    continue;
+
                 var iinfo = t.GetPhpTypeInfo();
                 result.Add(iinfo.Name, PhpValue.FromClass(new ReflectionClass(iinfo)));
             }
@@ -336,7 +369,7 @@ namespace Pchp.Library.Reflection
             {
                 if (p.IsStatic)
                 {
-                    array[p.PropertyName] = p.GetValue(ctx);
+                    array[p.PropertyName] = p.GetValue(ctx, null);
                 }
             }
 
@@ -346,10 +379,10 @@ namespace Pchp.Library.Reflection
         public PhpValue getStaticPropertyValue(Context ctx, string name)
         {
             var prop = _tinfo.GetDeclaredProperty(name) ?? throw new ReflectionException();
-            return prop.GetValue(ctx);
+            return prop.GetValue(ctx, null);
         }
 
-        public void setStaticPropertyValue(Context ctx, string name, PhpAlias def_value)
+        public void setStaticPropertyValue(Context ctx, string name, PhpValue def_value)
         {
             var prop = _tinfo.GetDeclaredProperty(name) ?? throw new ReflectionException();
             prop.SetValue(ctx, null, def_value);
@@ -429,7 +462,11 @@ namespace Pchp.Library.Reflection
         public bool isInstantiable() => _tinfo.isInstantiable;
         public bool isInterface() => _tinfo.IsInterface;
         public bool isInternal() => !isUserDefined();
-        public bool isIterateable() => _tinfo.Type.IsSubclassOf(typeof(Iterator)) || _tinfo.Type.IsSubclassOf(typeof(IteratorAggregate)) || _tinfo.Type.IsSubclassOf(typeof(System.Collections.IEnumerable));
+
+        [Obsolete("Instead of the missspelled RefectionClass::isIterateable(), ReflectionClass::isIterable() should be preferred.")]
+        public bool isIterateable() => isIterable();    // alias to isIterable()
+
+        public bool isIterable() => _tinfo.Type.IsSubclassOf(typeof(Iterator)) || _tinfo.Type.IsSubclassOf(typeof(IteratorAggregate)) || _tinfo.Type.IsSubclassOf(typeof(System.Collections.IEnumerable));
 
         /// <summary>
         /// Checks if the class is a subclass of a specified class or implements a specified interface.
@@ -450,10 +487,10 @@ namespace Pchp.Library.Reflection
         }
 
         public bool isTrait() => _tinfo.IsTrait;
-        public bool isUserDefined() => _tinfo.IsUserType;
+        public bool isUserDefined() => _tinfo.IsUserType || _tinfo.RelativePath != null;
         public object newInstance(Context ctx, params PhpValue[] args) => _tinfo.Creator(ctx, args);
         public object newInstanceArgs(Context ctx, PhpArray args) => newInstance(ctx, args.GetValues());
-        public object newInstanceWithoutConstructor(Context ctx) => _tinfo.GetUninitializedInstance(ctx);
+        public object newInstanceWithoutConstructor(Context ctx) => _tinfo.CreateUninitializedInstance(ctx);
         public void setStaticPropertyValue(string name, PhpValue value) { throw new NotImplementedException(); }
 
         #region Reflector

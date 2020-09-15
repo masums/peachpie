@@ -2,9 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Xml;
 using Pchp.Core;
 
@@ -43,29 +41,29 @@ namespace Pchp.Library
             XML_ERROR_EXTERNAL_ENTITY_HANDLING = 1,
         }
 
-        const int XML_ERROR_NONE = (int)XmlParserError.XML_ERROR_NONE;
-        const int XML_ERROR_GENERIC = (int)XmlParserError.XML_ERROR_GENERIC;
-        const int XML_ERROR_NO_MEMORY = (int)XmlParserError.XML_ERROR_NO_MEMORY;
-        const int XML_ERROR_SYNTAX = (int)XmlParserError.XML_ERROR_SYNTAX;
-        const int XML_ERROR_NO_ELEMENTS = (int)XmlParserError.XML_ERROR_NO_ELEMENTS;
-        const int XML_ERROR_INVALID_TOKEN = (int)XmlParserError.XML_ERROR_INVALID_TOKEN;
-        const int XML_ERROR_UNCLOSED_TOKEN = (int)XmlParserError.XML_ERROR_UNCLOSED_TOKEN;
-        const int XML_ERROR_PARTIAL_CHAR = (int)XmlParserError.XML_ERROR_PARTIAL_CHAR;
-        const int XML_ERROR_TAG_MISMATCH = (int)XmlParserError.XML_ERROR_TAG_MISMATCH;
-        const int XML_ERROR_DUPLICATE_ATTRIBUTE = (int)XmlParserError.XML_ERROR_DUPLICATE_ATTRIBUTE;
-        const int XML_ERROR_JUNK_AFTER_DOC_ELEMENT = (int)XmlParserError.XML_ERROR_JUNK_AFTER_DOC_ELEMENT;
-        const int XML_ERROR_PARAM_ENTITY_REF = (int)XmlParserError.XML_ERROR_PARAM_ENTITY_REF;
-        const int XML_ERROR_UNDEFINED_ENTITY = (int)XmlParserError.XML_ERROR_UNDEFINED_ENTITY;
-        const int XML_ERROR_RECURSIVE_ENTITY_REF = (int)XmlParserError.XML_ERROR_RECURSIVE_ENTITY_REF;
-        const int XML_ERROR_ASYNC_ENTITY = (int)XmlParserError.XML_ERROR_ASYNC_ENTITY;
-        const int XML_ERROR_BAD_CHAR_REF = (int)XmlParserError.XML_ERROR_BAD_CHAR_REF;
-        const int XML_ERROR_BINARY_ENTITY_REF = (int)XmlParserError.XML_ERROR_BINARY_ENTITY_REF;
-        const int XML_ERROR_ATTRIBUTE_EXTERNAL_ENTITY_REF = (int)XmlParserError.XML_ERROR_ATTRIBUTE_EXTERNAL_ENTITY_REF;
-        const int XML_ERROR_MISPLACED_XML_PI = (int)XmlParserError.XML_ERROR_MISPLACED_XML_PI;
-        const int XML_ERROR_UNKNOWN_ENCODING = (int)XmlParserError.XML_ERROR_UNKNOWN_ENCODING;
-        const int XML_ERROR_INCORRECT_ENCODING = (int)XmlParserError.XML_ERROR_INCORRECT_ENCODING;
-        const int XML_ERROR_UNCLOSED_CDATA_SECTION = (int)XmlParserError.XML_ERROR_UNCLOSED_CDATA_SECTION;
-        const int XML_ERROR_EXTERNAL_ENTITY_HANDLING = (int)XmlParserError.XML_ERROR_EXTERNAL_ENTITY_HANDLING;
+        public const int XML_ERROR_NONE = (int)XmlParserError.XML_ERROR_NONE;
+        public const int XML_ERROR_GENERIC = (int)XmlParserError.XML_ERROR_GENERIC;
+        public const int XML_ERROR_NO_MEMORY = (int)XmlParserError.XML_ERROR_NO_MEMORY;
+        public const int XML_ERROR_SYNTAX = (int)XmlParserError.XML_ERROR_SYNTAX;
+        public const int XML_ERROR_NO_ELEMENTS = (int)XmlParserError.XML_ERROR_NO_ELEMENTS;
+        public const int XML_ERROR_INVALID_TOKEN = (int)XmlParserError.XML_ERROR_INVALID_TOKEN;
+        public const int XML_ERROR_UNCLOSED_TOKEN = (int)XmlParserError.XML_ERROR_UNCLOSED_TOKEN;
+        public const int XML_ERROR_PARTIAL_CHAR = (int)XmlParserError.XML_ERROR_PARTIAL_CHAR;
+        public const int XML_ERROR_TAG_MISMATCH = (int)XmlParserError.XML_ERROR_TAG_MISMATCH;
+        public const int XML_ERROR_DUPLICATE_ATTRIBUTE = (int)XmlParserError.XML_ERROR_DUPLICATE_ATTRIBUTE;
+        public const int XML_ERROR_JUNK_AFTER_DOC_ELEMENT = (int)XmlParserError.XML_ERROR_JUNK_AFTER_DOC_ELEMENT;
+        public const int XML_ERROR_PARAM_ENTITY_REF = (int)XmlParserError.XML_ERROR_PARAM_ENTITY_REF;
+        public const int XML_ERROR_UNDEFINED_ENTITY = (int)XmlParserError.XML_ERROR_UNDEFINED_ENTITY;
+        public const int XML_ERROR_RECURSIVE_ENTITY_REF = (int)XmlParserError.XML_ERROR_RECURSIVE_ENTITY_REF;
+        public const int XML_ERROR_ASYNC_ENTITY = (int)XmlParserError.XML_ERROR_ASYNC_ENTITY;
+        public const int XML_ERROR_BAD_CHAR_REF = (int)XmlParserError.XML_ERROR_BAD_CHAR_REF;
+        public const int XML_ERROR_BINARY_ENTITY_REF = (int)XmlParserError.XML_ERROR_BINARY_ENTITY_REF;
+        public const int XML_ERROR_ATTRIBUTE_EXTERNAL_ENTITY_REF = (int)XmlParserError.XML_ERROR_ATTRIBUTE_EXTERNAL_ENTITY_REF;
+        public const int XML_ERROR_MISPLACED_XML_PI = (int)XmlParserError.XML_ERROR_MISPLACED_XML_PI;
+        public const int XML_ERROR_UNKNOWN_ENCODING = (int)XmlParserError.XML_ERROR_UNKNOWN_ENCODING;
+        public const int XML_ERROR_INCORRECT_ENCODING = (int)XmlParserError.XML_ERROR_INCORRECT_ENCODING;
+        public const int XML_ERROR_UNCLOSED_CDATA_SECTION = (int)XmlParserError.XML_ERROR_UNCLOSED_CDATA_SECTION;
+        public const int XML_ERROR_EXTERNAL_ENTITY_HANDLING = (int)XmlParserError.XML_ERROR_EXTERNAL_ENTITY_HANDLING;
 
         [PhpHidden]
         public enum XmlOption
@@ -228,20 +226,22 @@ namespace Pchp.Library
 
                 if (isFinal)
                 {
-                    if (input == null) input = string.Empty;
-                    StringBuilder sb = new StringBuilder(input.Length);
+                    input ??= string.Empty;
+                    var sb = StringBuilderUtilities.Pool.Get();
 
                     if (_inputQueue != null)
                     {
                         foreach (string s in _inputQueue)
+                        {
                             sb.Append(s);
+                        }
 
                         _inputQueue = null;
                     }
 
                     sb.Append(input);
 
-                    return ParseInternal(sb.ToString(), null, null);
+                    return ParseInternal(StringBuilderUtilities.GetStringAndReturn(sb), null, null);
                 }
                 else
                 {
@@ -524,7 +524,7 @@ namespace Pchp.Library
                 return _ISO_8859_1_Encoding;
             }
         }
-        static Encoding _ISO_8859_1_Encoding = null;
+        static Encoding _ISO_8859_1_Encoding;
 
         /// <summary>
         /// This function encodes the string data to UTF-8, and returns the encoded version. UTF-8 is
@@ -537,34 +537,25 @@ namespace Pchp.Library
         /// <param name="data">An ISO-8859-1 string. </param>
         /// <returns>Returns the UTF-8 translation of data.</returns>
         //[return:CastToFalse]
-        public static string utf8_encode(string data)
+        public static string utf8_encode(PhpString data)
         {
-            if (string.IsNullOrEmpty(data))
+            if (data.IsEmpty)
             {
                 return string.Empty;
             }
 
             // this function transforms ISO-8859-1 binary string into UTF8 string
-            // since our internal representation is native CLR string - UTF16, we have changed this semantic
+            // since our internal representation is native CLR string - UTF16, we have changed this semantic for Unicode input.
+            // - Any native String is not modified. The string was already encoded into a valid UTF16 sequence.
+            // - byte[] is treated as ISO-8859-1 encoded, and will be decoded to UTF16
 
-            //string encoded;
+            // This behavior has two reasons:
+            // - compatibility with Unicode behavior; already encoded string should not be decoded/encoded again
+            // - performance; instances of already encoded immutable strings are simply reused
 
-            //if (!data.ContainsBinayString)
-            //{
-            //    encoded = (string)data;
-            //}
-            //else
-            //{
-            //    // if we got binary string, assume it's ISO-8859-1 encoded string and convert it to System.String
-            //    encoded = ISO_8859_1_Encoding.GetString((data).ToBytes);
-            //}
-
-            //// return utf8 encoded data
-            //return (Configuration.Application.Globalization.PageEncoding == Encoding.UTF8) ?
-            //    (object)encoded : // PageEncoding is UTF8, we can keep .NET string, which will be converted to UTF8 byte stream as it would be needed
-            //    (object)new PhpBytes(Encoding.UTF8.GetBytes(encoded));   // conversion of string to byte[] would not respect UTF8 encoding, convert it now
-
-            return data;
+            // ISO-8859-1 is 8bit encoding so we don't have to concatenate the byte[] segments into a single array
+            // Any segments already encoded as System.String are returned as it is;
+            return data.ToString(ISO_8859_1_Encoding);
         }
 
         /// <summary>

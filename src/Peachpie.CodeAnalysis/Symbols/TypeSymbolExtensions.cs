@@ -61,14 +61,14 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         public static bool IsPhpUserType(this TypeSymbol/*!*/type) =>
             type.OriginalDefinition is SourceTypeSymbol ||  // either declared in source code
-            (type.TryGetPhpTypeAttribute(out var tname, out var fname) && fname != null); // or referenced with [PhpType("name", "path to original PHP file")]
+            (type.TryGetPhpTypeAttribute(out _, out var fname, out _) && fname != null); // or referenced with [PhpType("name", "path to original PHP file")]
 
         /// <summary>
-        /// Gets value indicating the type is a PHP user type (declared in a PHP code).
+        /// Gets value indicating the type is a PHP type (annotated with [PhpTypeAttribute] (and/or declared in user's code).
         /// </summary>
         public static bool IsPhpType(this TypeSymbol/*!*/type) =>
             type.OriginalDefinition is SourceTypeSymbol ||  // either declared in source code
-            (type.TryGetPhpTypeAttribute(out var tname, out var fname)); // or having [PhpTypeAttribute]
+            (type.TryGetPhpTypeAttribute(out _, out _, out _)); // or having [PhpTypeAttribute]
 
         public static bool ImplementsInterface(this TypeSymbol subType, TypeSymbol superInterface/*, ref HashSet<DiagnosticInfo> useSiteDiagnostics*/)
         {
@@ -111,6 +111,11 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             return t.MetadataName == "PhpArray" && (t.ContainingAssembly as AssemblySymbol)?.IsPeachpieCorLibrary == true;
         }
+        
+        public static bool Is_PhpResource(this ITypeSymbol t)
+        {
+            return t.MetadataName == "PhpResource" && (t.ContainingAssembly as AssemblySymbol)?.IsPeachpieCorLibrary == true;
+        }
 
         public static bool Is_PhpAlias(this ITypeSymbol t)
         {
@@ -134,7 +139,7 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             return t.IsDelegateType() && t is NamedTypeSymbol nt &&
                 nt.Arity == 2 &&
-                nt.ConstructedFrom.MetadataName == "Func" &&
+                nt.ConstructedFrom.MetadataName == "Func`2" &&
                 nt.TypeArguments[0].Name == "Context" &&
                 nt.TypeArguments[1].Is_PhpValue();
         }

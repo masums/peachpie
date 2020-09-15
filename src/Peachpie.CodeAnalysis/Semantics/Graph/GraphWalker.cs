@@ -128,6 +128,7 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
         public override T VisitCFGForeachEnumereeEdge(ForeachEnumereeEdge x)
         {
             Accept(x.Enumeree);
+
             x.NextBlock.Accept(this);
 
             return default;
@@ -417,6 +418,14 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
             return default;
         }
 
+        public override T VisitArrayItemOrd(BoundArrayItemOrdEx x)
+        {
+            Accept(x.Array);
+            Accept(x.Index);
+
+            return default;
+        }
+
         public override T VisitInstanceOf(BoundInstanceOfEx x)
         {
             Accept(x.Operand);
@@ -471,6 +480,15 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
             return default;
         }
 
+        public override T VisitTryGetItem(BoundTryGetItem x)
+        {
+            Accept(x.Array);
+            Accept(x.Index);
+            Accept(x.Fallback);
+
+            return default;
+        }
+
         public override T VisitLambda(BoundLambda x)
         {
             return default;
@@ -483,6 +501,12 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
             return default;
         }
 
+        public override T VisitThrow(BoundThrowExpression x)
+        {
+            Accept(x.Thrown);
+
+            return default;
+        }
 
         public override T VisitYieldEx(BoundYieldEx boundYieldEx)
         {
@@ -534,13 +558,6 @@ namespace Pchp.CodeAnalysis.Semantics.Graph
         public override T VisitReturn(BoundReturnStatement x)
         {
             Accept(x.Returned);
-
-            return default;
-        }
-
-        public override T VisitThrow(BoundThrowStatement x)
-        {
-            Accept(x.Thrown);
 
             return default;
         }

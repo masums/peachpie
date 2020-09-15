@@ -61,37 +61,59 @@ namespace Pchp.CodeAnalysis.Symbols
             this.DefaultValueField = defaultValueField;
         }
 
-        public static SynthesizedParameterSymbol Create(MethodSymbol container, ParameterSymbol p)
+        public static SynthesizedParameterSymbol Create(MethodSymbol container, ParameterSymbol p, int? ordinal = default)
         {
             var defaultValueField = ((ParameterSymbol)p.OriginalDefinition).DefaultValueField;
             if (defaultValueField != null && defaultValueField.ContainingType.IsTraitType())
             {
                 var selfcontainer = container.ContainingType;
-                var fieldcontainer = defaultValueField.ContainingType;
-                var newowner = fieldcontainer;
+                var fieldcontainer = defaultValueField.ContainingType; // trait
 
-                // this is trait ?
-                if (selfcontainer.OriginalDefinition is SourceTraitTypeSymbol st)
+                NamedTypeSymbol newowner;
+
+                if (selfcontainer.IsTraitType())
                 {
-                    newowner = fieldcontainer.ConstructedFrom.Construct(st.TSelfParameter);
+                    // field in a trait must be unbound,
+                    // metadata cannot refer to type parameter
+                    newowner = fieldcontainer.ConstructedFrom.ConstructUnboundGenericType();
                 }
-                else if (fieldcontainer.IsTraitType())
+                else
                 {
+                    // construct the container, map !TSelf
                     newowner = fieldcontainer.ConstructedFrom.Construct(selfcontainer);
                 }
 
                 //
                 if (newowner != fieldcontainer)
                 {
-                    defaultValueField = defaultValueField.AsMember(newowner);
+                    defaultValueField = defaultValueField.OriginalDefinition.AsMember(newowner);
                 }
             }
 
-            return new SynthesizedParameterSymbol(container, p.Type, p.Ordinal, p.RefKind,
+            return new SynthesizedParameterSymbol(container, p.Type, ordinal.HasValue ? ordinal.Value : p.Ordinal, p.RefKind,
                 name: p.Name,
                 isParams: p.IsParams,
                 explicitDefaultConstantValue: p.ExplicitDefaultConstantValue,
                 defaultValueField: defaultValueField);
+        }
+
+        public static ImmutableArray<ParameterSymbol> Create(MethodSymbol container, ImmutableArray<ParameterSymbol> srcparams)
+        {
+            if (srcparams.Length != 0)
+            {
+                var builder = ImmutableArray.CreateBuilder<ParameterSymbol>(srcparams.Length);
+
+                foreach (var p in srcparams)
+                {
+                    builder.Add(Create(container, p));
+                }
+
+                return builder.MoveToImmutable();
+            }
+            else
+            {
+                return ImmutableArray<ParameterSymbol>.Empty;
+            }
         }
 
         internal override TypeSymbol Type
@@ -165,7 +187,8 @@ namespace Pchp.CodeAnalysis.Symbols
             {
                 return
                     SpecialParameterSymbol.IsContextParameter(this) ||
-                    SpecialParameterSymbol.IsQueryValueParameter(this) ||
+                    SpecialParameterSymbol.IsImportValueParameter(this) ||
+                    SpecialParameterSymbol.IsDummyFieldsOnlyCtorParameter(this) ||
                     SpecialParameterSymbol.IsLateStaticParameter(this) ||
                     SpecialParameterSymbol.IsSelfParameter(this) ||
                     this.IsParams ||

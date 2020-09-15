@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Collections.Immutable;
 using Pchp.CodeAnalysis.Semantics;
+using Peachpie.CodeAnalysis.Symbols;
 
 namespace Pchp.CodeAnalysis.Symbols
 {
@@ -37,8 +38,7 @@ namespace Pchp.CodeAnalysis.Symbols
         /// <remarks>
         /// In PHP it is possible to set parameter's default value which cannot be represented using <see cref="ConstantValue"/>.
         /// In such case, the value is set to this runtime field and read if needed.
-        /// 
-        /// If this field is set, <see cref="HasUnmappedDefaultValue"/> will be <c>true</c>.</remarks>
+        /// </remarks>
         public virtual FieldSymbol DefaultValueField => null;
 
         public virtual bool IsOptional => false;
@@ -58,6 +58,10 @@ namespace Pchp.CodeAnalysis.Symbols
         public override bool IsSealed => true;
 
         public override bool IsExtern => false;
+
+        public virtual bool HasNotNull => false;
+
+        public virtual bool IsPhpRw => false;
 
         /// <summary>
         /// Gets the ordinal position of the parameter. The first parameter has ordinal zero.
@@ -105,19 +109,6 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </remarks>
         internal abstract ConstantValue ExplicitDefaultConstantValue { get; }
 
-        internal virtual AttributeData DefaultValueAttribute
-        {
-            get
-            {
-                //if (OriginalSymbolDefinition != this)
-                //{
-                //    return ((ParameterSymbol)OriginalSymbolDefinition).DefaultValueAttribute;
-                //}
-
-                return this.GetAttribute("Pchp.Core.DefaultValueAttribute");
-            }
-        }
-
         /// <summary>
         /// Returns data decoded from Obsolete attribute or null if there is no Obsolete attribute.
         /// This property returns ObsoleteAttributeData.Uninitialized if attribute arguments haven't been decoded yet.
@@ -127,12 +118,14 @@ namespace Pchp.CodeAnalysis.Symbols
             get { return null; }
         }
 
+        internal virtual ImportValueAttributeData ImportValueAttributeData => default;
+
         /// <summary>
         /// Helper method that checks whether this parameter can be passed to anothers method parameter.
         /// </summary>
         internal bool CanBePassedTo(ParameterSymbol another)
         {
-            return another != null && this.Type.IsEqualToOrDerivedFrom(another.Type);
+            return another != null && this.Type.IsOfType(another.Type);
         }
     }
 }

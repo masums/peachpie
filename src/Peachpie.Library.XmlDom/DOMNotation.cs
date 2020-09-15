@@ -9,7 +9,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// DOM notation.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public partial class DOMNotation : DOMNode
     {
         #region Fields and Properties
@@ -75,7 +75,7 @@ namespace Peachpie.Library.XmlDom
             this.XmlNotation = xmlNotation;
         }
 
-        protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
         {
             if (IsAssociated) return new DOMNotation(XmlNotation);
             else return new DOMNotation();

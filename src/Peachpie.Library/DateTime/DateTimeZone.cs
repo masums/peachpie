@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Pchp.Library.DateTime
@@ -12,8 +13,8 @@ namespace Pchp.Library.DateTime
     /// <summary>
     /// Representation of time zone.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
-    public class DateTimeZone
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("date")]
+    public class DateTimeZone : IPhpCloneable
     {
         internal TimeZoneInfo _timezone;
 
@@ -45,6 +46,12 @@ namespace Pchp.Library.DateTime
             _timezone = resolvedTimeZone ?? throw new ArgumentNullException();
         }
 
+        [PhpFieldsOnlyCtor]
+        protected DateTimeZone()
+        {
+            // empty, __construct to be called by implementor
+        }
+
         public DateTimeZone(Context ctx, string timezone_name)
         {
             __construct(ctx, timezone_name);
@@ -53,22 +60,36 @@ namespace Pchp.Library.DateTime
         // public __construct ( string $timezone )
         public void __construct(Context ctx, string timezone_name)
         {
-            if (timezone_name != null)
+            if (timezone_name == null)
             {
-                _timezone = PhpTimeZone.GetTimeZone(timezone_name);
-                _name = timezone_name;
-
-                if (_timezone == null)
-                {
-                    // TODO: an offset value (+0200)
-
-                    //PhpException.Throw(PhpError.Notice, LibResources.GetString("unknown_timezone", timezone_name));
-                    throw new Spl.InvalidArgumentException();
-                }
+                _timezone = PhpTimeZone.GetCurrentTimeZone(ctx);
             }
             else
             {
-                _timezone = PhpTimeZone.GetCurrentTimeZone(ctx);
+                var tz = PhpTimeZone.GetTimeZone(timezone_name);
+                if (tz == null)
+                {
+                    PhpException.Throw(PhpError.Notice, Resources.LibResources.unknown_timezone, timezone_name);
+                    throw new Spl.InvalidArgumentException();
+                }
+
+                //
+                _timezone = tz;
+                _name = timezone_name;
+            }
+        }
+
+        object IPhpCloneable.Clone()
+        {
+            if (GetType() == typeof(DateTimeZone))
+            {
+                // quick new instance
+                return new DateTimeZone(_timezone) { _name = _name, };
+            }
+            else
+            {
+                // 
+                return Operators.CloneInPlace(MemberwiseClone());
             }
         }
 

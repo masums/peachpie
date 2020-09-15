@@ -11,7 +11,7 @@ namespace Pchp.Library
 	/// PHP output control functions implementation. 
 	/// </summary>
 	/// <threadsafety static="true"/>
-    //[ImplementsExtension(LibraryDescriptor.ExtCore)]
+    [PhpExtension("Core")]
     public static class Output
     {
         public const int PHP_OUTPUT_HANDLER_START = (int)BufferedOutput.ChunkPosition.First;
@@ -265,7 +265,14 @@ namespace Pchp.Library
         /// </summary>
         public static void flush(Context ctx)
         {
-            ctx.HttpPhpContext?.Flush();
+            try
+            {
+                ctx.HttpPhpContext?.Flush(endRequest: false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // connection closed
+            }
         }
 
         /// <summary>

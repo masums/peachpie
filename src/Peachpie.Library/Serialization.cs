@@ -13,6 +13,7 @@ using System.Reflection;
 
 namespace Pchp.Library
 {
+    [PhpExtension("standard")]
     public static partial class PhpSerialization
     {
         #region Serializer
@@ -93,9 +94,7 @@ namespace Pchp.Library
             {
                 // the property name might encode its visibility and "classification" -> use these
                 // information for suitable property desc lookups
-                FieldAttributes visibility;
-                string type_name;
-                string property_name = Serialization.ParseSerializedPropertyName(name, out type_name, out visibility);
+                var property_name = Serialization.ParseSerializedPropertyName(name, out var type_name, out var visibility);
 
                 var declarer = (type_name == null)
                     ? tinfo
@@ -301,7 +300,7 @@ namespace Pchp.Library
                         // this shouldn't happen
                         // an array was referenced twice without being enclosed within the same alias (PhpAlias)
 
-                        Debug.Fail("Multiple references to the same array instance!");
+                        Debug.WriteLine("Multiple references to the same array instance!"); // harmless issue, handled as a regular alias
 
                         // this reference has already been serialized -> write out its seq. number
                         Write(Tokens.Reference);
@@ -407,10 +406,23 @@ namespace Pchp.Library
 
                     var classnameBytes = Encoding.GetBytes(classname);
 
+                    PhpArray serializedArray = null;
                     byte[] serializedBytes = null;
                     List<KeyValuePair<string, PhpValue>> serializedProperties = null;
 
-                    if (obj is global::Serializable serializable)
+                    var __serialize = tinfo.RuntimeMethods[TypeMethods.MagicMethods.__serialize];
+                    if (__serialize != null)
+                    {
+                        // TODO: check accessibility // CONSIDER do not reflect non-public methods in tinfo.RuntimeMethods at all!
+                        var rvalue = __serialize.Invoke(_ctx, obj);
+                        if (rvalue.IsPhpArray(out serializedArray) == false)
+                        {
+                            // FATAL ERROR
+                            // {0}::__serialize must return an array
+                            throw PhpException.TypeErrorException(string.Format(LibResources.__serialize_must_return_array, tinfo.Name));
+                        }
+                    }
+                    else if (obj is global::Serializable serializable)
                     {
                         var res = serializable.serialize();
                         if (res.IsDefault)
@@ -479,6 +491,16 @@ namespace Pchp.Library
                         // write serialized data
                         Write(serializedBytes);
                     }
+                    else if (serializedArray != null)
+                    {
+                        // write out property count
+                        Write(serializedArray.Count.ToString());
+                        Write(Tokens.Colon);
+                        Write(Tokens.BraceOpen);
+
+                        // enumerate array items and serialize them
+                        base.Accept(serializedArray);
+                    }
                     else
                     {
                         // write out property count
@@ -490,7 +512,7 @@ namespace Pchp.Library
                         AcceptObjectProperties(serializedProperties);
                     }
 
-                    //
+                    // }
                     Write(Tokens.BraceClose);
                 }
 
@@ -528,20 +550,18 @@ namespace Pchp.Library
 
                         // obtain the property desc and decorate the prop name according to its visibility and declaring class
                         var property = tinfo.GetDeclaredProperty(property_name);
-                        if (property != null && !property.IsStatic && property.IsVisible(declarer.Type.AsType()))
+                        if (property != null && !property.IsStatic && property.IsVisible(declarer.Type))
                         {
-                            var prop_declarer = property.ContainingType;
-
                             // if certain conditions are met, serialize the property as null
                             // (this is to precisely mimic the PHP behavior)
                             if ((visibility == (property.Attributes & FieldAttributes.FieldAccessMask) && visibility != FieldAttributes.Public) ||
-                                (visibility == FieldAttributes.Private && declarer != prop_declarer))
+                                (visibility == FieldAttributes.Private && declarer != property.ContainingType))
                             {
                                 yield return new KeyValuePair<string, PhpValue>(name, PhpValue.Null);
                                 continue;
                             }
 
-                            name = Serialization.FormatSerializedPropertyName(property, prop_declarer);
+                            name = Serialization.FormatSerializedPropertyName(property);
                         }
                         else
                         {
@@ -671,16 +691,6 @@ namespace Pchp.Library
                 #endregion
 
                 #region Utils
-
-                /// <summary>
-                /// Quickly check if the look ahead byte is digit. Assumes the value is in range 0x00 - 0xff.
-                /// </summary>
-                /// <param name="ch">The byte value.</param>
-                /// <returns>True if value is in range '0'-'9'.</returns>
-                static bool IsDigit(char ch)
-                {
-                    return Digit(ch) != -1;
-                }
 
                 /// <summary>
                 /// Quickly determine the numeric value of given <paramref name="ch"/> byte.
@@ -1050,7 +1060,7 @@ namespace Pchp.Library
                     object obj;
                     if (tinfo != null)
                     {
-                        obj = tinfo.GetUninitializedInstance(_ctx);
+                        obj = tinfo.CreateUninitializedInstance(_ctx);
                         if (obj == null)
                         {
                             throw new ArgumentException(string.Format(LibResources.class_instantiation_failed, class_name));
@@ -1064,6 +1074,7 @@ namespace Pchp.Library
                         throw new NotImplementedException("__PHP_Incomplete_Class");
                     }
 
+                    // {
                     Consume(Tokens.BraceOpen);
 
                     if (serializable)
@@ -1096,33 +1107,50 @@ namespace Pchp.Library
                     }
                     else
                     {
+                        var __unserialize = tinfo.RuntimeMethods[TypeMethods.MagicMethods.__unserialize];
+                        var __unserialize_array = __unserialize != null ? new PhpArray(count) : null;
+
                         // parse properties
                         while (--count >= 0)
                         {
-                            // parse property name
-                            var nameval = Parse();
-                            var pname = nameval.ToStringOrNull();
-                            if (pname == null)
+                            var key = Parse();
+                            var value = Parse();
+
+                            //
+                            if (key.TryToIntStringKey(out var iskey))
                             {
-                                if (!nameval.IsInteger()) ThrowInvalidDataType();
-                                pname = nameval.ToStringOrThrow(_ctx);
+                                if (__unserialize_array != null)
+                                {
+                                    __unserialize_array[iskey] = value;
+                                }
+                                else
+                                {
+                                    // set property
+                                    SetProperty(obj, tinfo, iskey.ToString(), value, _ctx);
+                                }
                             }
-
-                            // parse property value
-                            var pvalue = Parse();
-
-                            // set property
-                            SetProperty(obj, tinfo, pname, pvalue, _ctx);
+                            else
+                            {
+                                this.ThrowInvalidDataType();
+                            }
                         }
 
-                        // __wakeup
-                        var __wakeup = tinfo.RuntimeMethods[TypeMethods.MagicMethods.__wakeup];
-                        if (__wakeup != null)
+                        if (__unserialize != null)
                         {
-                            __wakeup.Invoke(_ctx, obj);
+                            __unserialize.Invoke(_ctx, obj, __unserialize_array);
+                        }
+                        else
+                        {
+                            // __wakeup
+                            var __wakeup = tinfo.RuntimeMethods[TypeMethods.MagicMethods.__wakeup];
+                            if (__wakeup != null)
+                            {
+                                __wakeup.Invoke(_ctx, obj);
+                            }
                         }
                     }
 
+                    // }
                     Consume(Tokens.BraceClose);
 
                     //
@@ -1197,7 +1225,7 @@ namespace Pchp.Library
         /// <param name="caller">Caller class context.</param>
         /// <param name="value">The value to be serialized.</param>
         /// <returns></returns>
-        public static PhpString serialize(Context ctx, [ImportCallerClass]RuntimeTypeHandle caller, PhpValue value)
+        public static PhpString serialize(Context ctx, [ImportValue(ImportValueAttribute.ValueSpec.CallerClass)]RuntimeTypeHandle caller, PhpValue value)
         {
             return PhpSerializer.Instance.Serialize(ctx, value, caller);
         }
@@ -1213,7 +1241,7 @@ namespace Pchp.Library
         /// The converted value is returned, and can be a boolean, integer, float, string, array or object.
         /// In case the passed string is not unserializeable, <c>FALSE</c> is returned and <b>E_NOTICE</b> is issued.
         /// </returns>
-        public static PhpValue unserialize(Context ctx, [ImportCallerClass]RuntimeTypeHandle caller, PhpString str, PhpArray options = null)
+        public static PhpValue unserialize(Context ctx, [ImportValue(ImportValueAttribute.ValueSpec.CallerClass)]RuntimeTypeHandle caller, PhpString str, PhpArray options = null)
         {
             return PhpSerializer.Instance.Deserialize(ctx, str, caller);
         }

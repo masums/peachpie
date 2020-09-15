@@ -36,6 +36,13 @@ namespace Pchp.Core
             /// Optional. Collection of additional metadata references.
             /// </summary>
             public string[] AdditionalReferences { get; set; }
+
+            /// <summary>
+            /// Optional.
+            /// Sets the language version.
+            /// By default, it uses the version of currently running scripts, or the latest version available.
+            /// </summary>
+            public Version LanguageVersion { get; set; }
         }
 
         /// <summary>
@@ -56,7 +63,7 @@ namespace Pchp.Core
             /// <summary>
             /// Resolves global function handle(s).
             /// </summary>
-            IEnumerable<System.Reflection.MethodInfo> GetGlobalRoutineHandle(string name);
+            IEnumerable<MethodInfo> GetGlobalRoutineHandle(string name);
         }
 
         /// <summary>
@@ -106,7 +113,10 @@ namespace Pchp.Core
                         var ass = Assembly.Load(new AssemblyName("Peachpie.Library.Scripting"));
                         type = ass.GetType("Peachpie.Library.Scripting.ScriptingProvider", throwOnError: false);
                     }
-                    catch { }
+                    catch // FileNotFoundException, FileLoadException
+                    {
+                        // missing Peachpie.Library.Scripting assembly is expected => scripting is not allowed
+                    }
 
                     // instantiate the provider singleton
                     var provider = type != null

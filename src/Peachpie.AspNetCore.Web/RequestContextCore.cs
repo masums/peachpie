@@ -32,7 +32,7 @@ namespace Peachpie.AspNetCore.Web
             get { return _httpctx.Response.HasStarted; }
         }
 
-        void IHttpPhpContext.SetHeader(string name, string value)
+        void IHttpPhpContext.SetHeader(string name, string value, bool append)
         {
             if (name.EqualsOrdinalIgnoreCase("content-length"))
             {
@@ -40,16 +40,23 @@ namespace Peachpie.AspNetCore.Web
                 return;
             }
 
+            // specific cases:
+            if (name.EqualsOrdinalIgnoreCase("location"))
+            {
+                _httpctx.Response.StatusCode = (int)System.Net.HttpStatusCode.Redirect; // 302
+            }
+
             //
             var stringValue = new StringValues(value);
 
-            // headers that can have multiple values:
-            if (name.EqualsOrdinalIgnoreCase("set-cookie"))
+            if (append) // || name.EqualsOrdinalIgnoreCase("set-cookie")
             {
+                // headers that can have multiple values:
                 _httpctx.Response.Headers.Append(name, stringValue);
             }
             else
             {
+                // replace semantic
                 _httpctx.Response.Headers[name] = stringValue;
             }
         }
@@ -116,7 +123,7 @@ namespace Peachpie.AspNetCore.Web
 
         void IHttpPhpContext.AddCookie(string name, string value, DateTimeOffset? expires, string path, string domain, bool secure, bool httpOnly)
         {
-            _httpctx.Response.Cookies.Append(name, value, new CookieOptions()
+            _httpctx.Response.Cookies.Append(name, value ?? string.Empty, new CookieOptions()
             {
                 Expires = expires,
                 Path = path,
@@ -126,9 +133,18 @@ namespace Peachpie.AspNetCore.Web
             });
         }
 
-        void IHttpPhpContext.Flush()
+        void IHttpPhpContext.Flush(bool endRequest)
         {
             _httpctx.Response.Body.Flush();
+
+            if (endRequest)
+            {
+                // reset underlying output stream without disabling Output Buffering
+                InitOutput(null, enableOutputBuffering: IsOutputBuffered);
+
+                // signal to continue request pipeline
+                RequestCompletionSource?.TrySetResult(RequestCompletionReason.ForceEnd);
+            }
         }
 
         /// <summary>
@@ -213,6 +229,14 @@ namespace Peachpie.AspNetCore.Web
         }
 
         /// <summary>
+        /// Event signaling the request processing has been finished or cancelled.
+        /// </summary>
+        /// <remarks>
+        /// End may occur when request finishes its processing or when event explicitly requested by user's code (See <see cref="IHttpPhpContext.Flush(bool)"/>).
+        /// </remarks>
+        public TaskCompletionSource<RequestCompletionReason> RequestCompletionSource { get; internal set; }
+
+        /// <summary>
         /// Performs the request lifecycle, invokes given entry script and cleanups the context.
         /// </summary>
         /// <param name="script">Entry script.</param>
@@ -226,21 +250,10 @@ namespace Peachpie.AspNetCore.Web
             // remember the initial script file
             this.MainScriptFile = script;
 
-            //
-
+            // main script exception handler
             try
             {
-                if (Debugger.IsAttached)
-                {
-                    script.Evaluate(this, this.Globals, null);
-                }
-                else
-                {
-                    using (_requestTimer = new Timer(RequestTimeout, null, this.Configuration.Core.ExecutionTimeout, Timeout.Infinite))
-                    {
-                        script.Evaluate(this, this.Globals, null);
-                    }
-                }
+                script.Evaluate(this, this.Globals, null);
             }
             catch (ScriptDiedException died)
             {
@@ -253,11 +266,6 @@ namespace Peachpie.AspNetCore.Web
                     throw;
                 }
             }
-        }
-
-        void RequestTimeout(object state)
-        {
-
         }
 
         void AddServerScriptItems(ScriptInfo script)
@@ -293,14 +301,14 @@ namespace Peachpie.AspNetCore.Web
         /// <summary>
         /// Name of the server software as it appears in <c>$_SERVER[SERVER_SOFTWARE]</c> variable.
         /// </summary>
-        public const string ServerSoftware = "ASP.NET Core Server";
+        public static string ServerSoftware => "ASP.NET Core Server";
 
         /// <summary>
         /// Informational string exposing technology powering the web request and version.
         /// </summary>
-        static readonly string XPoweredBy = "PeachPie" + " " + ContextExtensions.GetRuntimeInformationalVersion();
+        static readonly string s_XPoweredBy = $"PeachPie {ContextExtensions.GetRuntimeInformationalVersion()}";
 
-        static string DefaultContentType = "text/html; charset=UTF-8";
+        static string DefaultContentType => "text/html; charset=UTF-8";
 
         /// <summary>
         /// Unique key of item within <see cref="HttpContext.Items"/> associated with this <see cref="Context"/>.
@@ -314,12 +322,8 @@ namespace Peachpie.AspNetCore.Web
         public HttpContext HttpContext => _httpctx;
         readonly HttpContext _httpctx;
 
-        /// <summary>
-        /// Internal timer used to cancel execution upon timeout.
-        /// </summary>
-        Timer _requestTimer;
-
         public RequestContextCore(HttpContext httpcontext, string rootPath, Encoding encoding)
+            : base(httpcontext.RequestServices)
         {
             Debug.Assert(httpcontext != null);
             Debug.Assert(encoding != null);
@@ -328,15 +332,20 @@ namespace Peachpie.AspNetCore.Web
             _encoding = encoding;
 
             httpcontext.Items[HttpContextItemKey] = this;
-            httpcontext.Response.RegisterForDispose(this);
+
+            // enable synchronous IO until we make everything async
+            // https://github.com/aspnet/Announcements/issues/342
+            var bodyControl = httpcontext.Features.Get<IHttpBodyControlFeature>();
+            if (bodyControl != null)
+            {
+                bodyControl.AllowSynchronousIO = true;
+            }
 
             //
             this.RootPath = rootPath;
 
             this.InitOutput(httpcontext.Response.Body, new SynchronizedTextWriter(httpcontext.Response, encoding));
             this.InitSuperglobals();
-
-            // TODO: start session if AutoStart is On
 
             this.SetupHeaders();
         }
@@ -357,7 +366,7 @@ namespace Peachpie.AspNetCore.Web
         void SetupHeaders()
         {
             _httpctx.Response.ContentType = DefaultContentType;                         // default content type if not set anything by the application
-            _httpctx.Response.Headers["X-Powered-By"] = new StringValues(XPoweredBy);   //
+            _httpctx.Response.Headers["X-Powered-By"] = new StringValues(s_XPoweredBy); //
         }
 
         static void AddVariables(PhpArray target, IEnumerable<KeyValuePair<string, StringValues>> values)
@@ -448,7 +457,11 @@ namespace Peachpie.AspNetCore.Web
             }
             array[CommonPhpArrayKeys.REQUEST_TIME_FLOAT] = (PhpValue)DateTimeUtils.UtcToUnixTimeStampFloat(DateTime.UtcNow);
             array[CommonPhpArrayKeys.REQUEST_TIME] = (PhpValue)DateTimeUtils.UtcToUnixTimeStamp(DateTime.UtcNow);
-            array[CommonPhpArrayKeys.HTTPS] = PhpValue.Create(string.Equals(request.Scheme, "https", StringComparison.OrdinalIgnoreCase));
+
+            if (string.Equals(request.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+            {
+                array[CommonPhpArrayKeys.HTTPS] = "on";
+            }
 
             //
             return array;
@@ -456,29 +469,43 @@ namespace Peachpie.AspNetCore.Web
 
         protected override PhpArray InitGetVariable()
         {
-            var result = PhpArray.NewEmpty();
+            var query = _httpctx.Request.Query;
+            var form = (_httpctx.Request.Method == HttpMethods.Get && _httpctx.Request.HasFormContentType) ? _httpctx.Request.Form : null;
 
-            if (_httpctx.Request.Method == "GET" && _httpctx.Request.HasFormContentType)
+            if (query.Count != 0 || form != null)
             {
-                AddVariables(result, _httpctx.Request.Form);
+                var result = new PhpArray(query.Count);
+
+                if (form != null && form.Count != 0)
+                {
+                    // variables passed through GET request using multipart/form-data
+                    AddVariables(result, form);
+                }
+
+                AddVariables(result, query);
+
+                return result;
             }
-
-            AddVariables(result, _httpctx.Request.Query);
-
-            //
-            return result;
+            else
+            {
+                return PhpArray.NewEmpty();
+            }
         }
 
         protected override PhpArray InitPostVariable()
         {
-            var result = PhpArray.NewEmpty();
-
-            if (_httpctx.Request.Method == "POST" && _httpctx.Request.HasFormContentType)
+            if (_httpctx.Request.HasFormContentType)
             {
-                AddVariables(result, _httpctx.Request.Form);
+                var form = _httpctx.Request.Form;
+                if (form.Count != 0)
+                {
+                    var result = new PhpArray(form.Count);
+                    AddVariables(result, form);
+                    return result;
+                }
             }
 
-            return result;
+            return PhpArray.NewEmpty();
         }
 
         protected override PhpArray InitFilesVariable()
@@ -527,14 +554,10 @@ namespace Peachpie.AspNetCore.Web
                     }
 
                     //
-                    files[file.Name] = (PhpValue)new PhpArray(5)
-                    {
-                        { "name", file_name },
-                        { "type",type },
-                        { "tmp_name",file_path },
-                        { "error", error },
-                        { "size", file.Length },
-                    };
+                    Superglobals.AddFormFile(
+                        files, file.Name,
+                        file_name, type, file_path, error, file.Length
+                    );
                 }
             }
             else

@@ -10,7 +10,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// Supports XPath 1.0.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public class DOMXPath
     {
         #region Fields and Properties
@@ -91,7 +91,19 @@ namespace Peachpie.Library.XmlDom
 
         public void __construct(DOMDocument document)
         {
-            this.XPathNavigator = document.XmlDocument.DocumentElement.CreateNavigator();
+            var xmldoc = document.XmlDocument;
+            if (xmldoc == null)
+            {
+                // invalid document provided
+                throw new ArgumentException(nameof(document));
+            }
+
+            var element = xmldoc.DocumentElement;
+
+            this.XPathNavigator = (element != null)
+                ? element.CreateNavigator() // regular XPathNavigator from the root
+                : xmldoc.CreateNavigator(); // empty xml document!
+
             InitNamespaceManagers(document._isHtmlDocument);
         }
 

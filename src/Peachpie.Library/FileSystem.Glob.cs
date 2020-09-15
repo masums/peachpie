@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 
 namespace Pchp.Library
 {
+    [PhpExtension("standard")]
     public static partial class PhpPath
     {
         #region GlobOptions, FnMatchOptions
@@ -24,6 +25,11 @@ namespace Pchp.Library
             /// No flags.
             /// </summary>
             None = 0,
+
+            /// <summary>
+            /// List directories only.
+            /// </summary>
+            StopOnError = 0x0004,
 
             /// <summary>
             /// Append system directory separator (slash) to matching directories.
@@ -54,11 +60,6 @@ namespace Pchp.Library
             /// List directories only.
             /// </summary>
             OnlyDir = 0x40000000,
-
-            /// <summary>
-            /// List directories only.
-            /// </summary>
-            StopOnError = 0x4
         }
 
         public const int GLOB_MARK = (int)GlobOptions.Mark;
@@ -68,6 +69,7 @@ namespace Pchp.Library
         public const int GLOB_NOESCAPE = (int)GlobOptions.NoEscape;
         public const int GLOB_ONLYDIR = (int)GlobOptions.OnlyDir;
         public const int GLOB_ERR = (int)GlobOptions.StopOnError;
+        public const int GLOB_AVAILABLE_FLAGS = GLOB_MARK | GLOB_NOCHECK | GLOB_NOSORT | GLOB_BRACE | GLOB_NOESCAPE | GLOB_ONLYDIR | GLOB_ERR;
 
         /// <summary>
         /// Flags used in call to <c>fnmatch()</c>.

@@ -24,30 +24,22 @@ namespace Pchp.CodeAnalysis
         ImmutableDictionary<string, string> _features;
 
         /// <summary>
-        /// Set of compile-time defined constants.
-        /// </summary>
-        public ImmutableDictionary<string, string> Defines => _defines;
-        ImmutableDictionary<string, string> _defines;
-
-        /// <summary>
         /// Gets required language version.
         /// <c>null</c> value respects the parser's default which is always the latest version.
         /// </summary>
-        public Version LanguageVersion => _languageVersion;
-        readonly Version _languageVersion;
+        public Version LanguageVersion { get; private set; }
 
         /// <summary>
         /// Whether to allow the deprecated short open tag syntax.
         /// </summary>
-        public bool AllowShortOpenTags => _allowShortOpenTags;
-        readonly bool _allowShortOpenTags;
+        public bool AllowShortOpenTags { get; }
 
         public PhpParseOptions(
             DocumentationMode documentationMode = DocumentationMode.Parse,
             SourceCodeKind kind = SourceCodeKind.Regular,
             Version languageVersion = null,
             bool shortOpenTags = false)
-            :base(kind, documentationMode)
+            : base(kind, documentationMode)
         {
             if (!kind.IsValid())
             {
@@ -56,8 +48,8 @@ namespace Pchp.CodeAnalysis
 
             PhpSyntaxTree.ParseLanguageVersion(ref languageVersion);    // throws if value not supported
 
-            _languageVersion = languageVersion;
-            _allowShortOpenTags = shortOpenTags;
+            this.LanguageVersion = languageVersion;
+            this.AllowShortOpenTags = shortOpenTags;
         }
 
         internal PhpParseOptions(
@@ -65,12 +57,10 @@ namespace Pchp.CodeAnalysis
             SourceCodeKind kind,
             Version languageVersion,
             bool shortOpenTags,
-            ImmutableDictionary<string, string> features,
-            ImmutableDictionary<string, string> defines)
+            ImmutableDictionary<string, string> features)
             : this(documentationMode, kind, languageVersion, shortOpenTags)
         {
             _features = features ?? throw new ArgumentNullException(nameof(features));
-            _defines = defines ?? throw new ArgumentNullException(nameof(features));
         }
 
         private PhpParseOptions(PhpParseOptions other)
@@ -81,7 +71,7 @@ namespace Pchp.CodeAnalysis
                   shortOpenTags: other.AllowShortOpenTags)
         {
         }
-        
+
         public new PhpParseOptions WithKind(SourceCodeKind kind)
         {
             if (kind == this.Kind)
@@ -138,6 +128,19 @@ namespace Pchp.CodeAnalysis
             }
 
             return new PhpParseOptions(this) { _features = features.ToImmutableDictionary(StringComparer.OrdinalIgnoreCase) };
+        }
+
+        /// <summary>
+        /// Language version.
+        /// </summary>
+        public PhpParseOptions WithLanguageVersion(Version version)
+        {
+            if (ReferenceEquals(LanguageVersion, version) || LanguageVersion == version)
+            {
+                return this;
+            }
+
+            return new PhpParseOptions(this) { LanguageVersion = version, };
         }
 
         public override IReadOnlyDictionary<string, string> Features

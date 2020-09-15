@@ -1,6 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <Import Project="..\..\..\build\Targets\Settings.props" />
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0</TargetFrameworks>
     <PreserveCompilationContext>true</PreserveCompilationContext>
@@ -14,7 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Npgsql" Version="4.0.8" />
+    <PackageReference Include="Npgsql" Version="4.1.4" />
   </ItemGroup>
 
 </Project>

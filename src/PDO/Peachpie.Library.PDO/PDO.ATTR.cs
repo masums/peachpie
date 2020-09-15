@@ -98,12 +98,15 @@ namespace Peachpie.Library.PDO
             /// use query emulation rather than native
             /// </summary>
             ATTR_EMULATE_PREPARES = 20,
+            /// <summary>default string parameter type</summary>
+            DEFAULT_STR_PARAM = PDO.ATTR_DEFAULT_STR_PARAM,
 
             /// <summary>
             /// this defines the start of the range for driver specific options
             /// </summary>
-            ATTR_DRIVER_SPECIFIC = 1000
+            ATTR_DRIVER_SPECIFIC = PDO.ATTR_DRIVER_SPECIFIC,
         }
+
         /// <summary>
         /// use to turn on or off auto-commit mode
         /// </summary>
@@ -190,8 +193,155 @@ namespace Peachpie.Library.PDO
         public const int ATTR_EMULATE_PREPARES = (int)PDO_ATTR.ATTR_EMULATE_PREPARES;
 
         /// <summary>
+        /// default string parameter type, this can be one of <see cref="PARAM_STR_NATL"/> and <see cref="PARAM_STR_CHAR"/>.
+        /// </summary>
+        public const int ATTR_DEFAULT_STR_PARAM = 21;
+
+        /// <summary>
         /// this defines the start of the range for driver specific options
         /// </summary>
-        public const int ATTR_DRIVER_SPECIFIC = (int)PDO_ATTR.ATTR_DRIVER_SPECIFIC;
+        public const int ATTR_DRIVER_SPECIFIC = 1000;
+
+        #region MYSQL_ATTR
+
+        ///<summary>MySql specific attributes.</summary>
+        public enum MYSQL_ATTR
+        {
+            ///<summary></summary>
+            USE_BUFFERED_QUERY = PDO.MYSQL_ATTR_USE_BUFFERED_QUERY,
+            ///<summary></summary>
+            LOCAL_INFILE = PDO.MYSQL_ATTR_LOCAL_INFILE,
+            ///<summary></summary>
+            INIT_COMMAND = PDO.MYSQL_ATTR_INIT_COMMAND,
+            ///<summary></summary>
+            COMPRESS = PDO.MYSQL_ATTR_COMPRESS,
+            ///<summary></summary>
+            DIRECT_QUERY = PDO.MYSQL_ATTR_DIRECT_QUERY,
+            ///<summary></summary>
+            FOUND_ROWS = PDO.MYSQL_ATTR_FOUND_ROWS,
+            ///<summary></summary>
+            IGNORE_SPACE = PDO.MYSQL_ATTR_IGNORE_SPACE,
+            ///<summary></summary>
+            SSL_KEY = PDO.MYSQL_ATTR_SSL_KEY,
+            ///<summary></summary>
+            SSL_CERT = PDO.MYSQL_ATTR_SSL_CERT,
+            ///<summary></summary>
+            SSL_CA = PDO.MYSQL_ATTR_SSL_CA,
+            ///<summary></summary>
+            SSL_CAPATH = PDO.MYSQL_ATTR_SSL_CAPATH,
+            ///<summary></summary>
+            SSL_CIPHER = PDO.MYSQL_ATTR_SSL_CIPHER,
+            ///<summary></summary>
+            SERVER_PUBLIC_KEY = PDO.MYSQL_ATTR_SERVER_PUBLIC_KEY,
+            ///<summary></summary>
+            MULTI_STATEMENTS = PDO.MYSQL_ATTR_MULTI_STATEMENTS,
+            ///<summary></summary>
+            SSL_VERIFY_SERVER_CERT = PDO.MYSQL_ATTR_SSL_VERIFY_SERVER_CERT,
+        }
+
+        ///<summary></summary>
+        public const int MYSQL_ATTR_USE_BUFFERED_QUERY = 1000;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_LOCAL_INFILE = 1001;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_INIT_COMMAND = 1002;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_COMPRESS = 1003;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_DIRECT_QUERY = 1004;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_FOUND_ROWS = 1005;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_IGNORE_SPACE = 1006;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SSL_KEY = 1007;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SSL_CERT = 1008;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SSL_CA = 1009;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SSL_CAPATH = 1010;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SSL_CIPHER = 1011;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SERVER_PUBLIC_KEY = 1012;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_MULTI_STATEMENTS = 1013;
+        ///<summary></summary>
+        public const int MYSQL_ATTR_SSL_VERIFY_SERVER_CERT = 1014;
+
+        #endregion
+
+        #region SQLITE_ATTR
+
+        ///<summary></summary>
+        public enum SQLITE_ATTR
+        {
+            ///<summary></summary>
+            OPEN_FLAGS = PDO.SQLITE_ATTR_OPEN_FLAGS,
+            ///<summary></summary>
+            READONLY_STATEMENT = PDO.SQLITE_ATTR_READONLY_STATEMENT,
+            ///<summary></summary>
+            EXTENDED_RESULT_CODES = PDO.SQLITE_ATTR_EXTENDED_RESULT_CODES,
+        }
+
+        ///<summary></summary>
+        public const int SQLITE_ATTR_OPEN_FLAGS = 1000;
+        ///<summary></summary>
+        public const int SQLITE_ATTR_READONLY_STATEMENT = 1001;
+        ///<summary></summary>
+        public const int SQLITE_ATTR_EXTENDED_RESULT_CODES = 1002;
+
+        #endregion
+
+        #region SQLSRV_ATTR
+
+        ///<summary></summary>
+        public enum SQLSRV_ATTR
+        {
+            ///<summary></summary>
+            ENCODING = SQLSRV_ATTR_ENCODING,
+            ///<summary></summary>
+            ENCODING_DEFAULT = SQLSRV_ENCODING_DEFAULT,
+            ///<summary></summary>
+            ENCODING_BINARY = SQLSRV_ENCODING_BINARY,
+            ///<summary></summary>
+            ENCODING_SYSTEM = SQLSRV_ENCODING_SYSTEM,
+            ///<summary></summary>
+            ENCODING_UTF8 = SQLSRV_ENCODING_UTF8,
+            ///<summary></summary>
+            CURSOR_SCROLL_TYPE = SQLSRV_ATTR_CURSOR_SCROLL_TYPE,
+            ///<summary></summary>
+            DIRECT_QUERY = SQLSRV_ATTR_DIRECT_QUERY,
+            ///<summary></summary>
+            FETCHES_NUMERIC_TYPE = SQLSRV_ATTR_FETCHES_NUMERIC_TYPE,
+            ///<summary></summary>
+            QUERY_TIMEOUT = SQLSRV_ATTR_QUERY_TIMEOUT,
+            ///<summary></summary>
+            PARAM_OUT_DEFAULT_SIZE = SQLSRV_PARAM_OUT_DEFAULT_SIZE,
+        }
+
+        ///<summary></summary>
+        public const int SQLSRV_ENCODING_DEFAULT = 1;
+        ///<summary></summary>
+        public const int SQLSRV_ENCODING_BINARY = 2;
+        ///<summary></summary>
+        public const int SQLSRV_ENCODING_SYSTEM = 3;
+        ///<summary></summary>
+        public const int SQLSRV_ENCODING_UTF8 = 65001;
+        ///<summary></summary>
+        public const int SQLSRV_ATTR_ENCODING = 1000;
+        ///<summary></summary>
+        public const int SQLSRV_ATTR_QUERY_TIMEOUT = 1001;
+        ///<summary></summary>
+        public const int SQLSRV_ATTR_DIRECT_QUERY = 1002;
+        ///<summary></summary>
+        public const int SQLSRV_ATTR_CURSOR_SCROLL_TYPE = 1003;
+        ///<summary></summary>
+        public const int SQLSRV_ATTR_FETCHES_NUMERIC_TYPE = 1005;
+        ///<summary></summary>
+        public const int SQLSRV_PARAM_OUT_DEFAULT_SIZE = -1;
+
+        #endregion
     }
 }

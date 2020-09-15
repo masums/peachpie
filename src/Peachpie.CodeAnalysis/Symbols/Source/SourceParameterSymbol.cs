@@ -37,6 +37,12 @@ namespace Pchp.CodeAnalysis.Symbols
         public override BoundExpression Initializer => _initializer;
         readonly BoundExpression _initializer;
 
+        /// <summary>
+        /// Whether the parameter needs to be copied when passed by value.
+        /// Can be set to <c>false</c> by analysis (e.g. unused parameter or only delegation to another method).
+        /// </summary>
+        public bool CopyOnPass { get; set; } = true;
+
         public override FieldSymbol DefaultValueField
         {
             get
@@ -48,8 +54,10 @@ namespace Pchp.CodeAnalysis.Symbols
                     if (Initializer is BoundArrayEx arr)
                     {
                         // special case: empty array
-                        if (arr.Items.Length == 0)
+                        if (arr.Items.Length == 0 && !_syntax.PassedByRef)
                         {
+                            // OPTIMIZATION: reference the singleton field directly, the called routine is responsible to perform copy if necessary
+                            // parameter MUST NOT be `PassedByRef` https://github.com/peachpiecompiler/peachpie/issues/591
                             // PhpArray.Empty
                             return DeclaringCompilation.CoreMethods.PhpArray.Empty;
                         }
@@ -66,7 +74,10 @@ namespace Pchp.CodeAnalysis.Symbols
                         fldtype = DeclaringCompilation.CoreTypes.PhpValue;
                     }
 
-                    if (Initializer.RequiresContext)
+                    // The construction of the default value may require a Context, cannot be created as a static singletong
+                    // Additionally; default values of REF parameter must be created every time from scratch! https://github.com/peachpiecompiler/peachpie/issues/591
+                    if (Initializer.RequiresContext ||
+                        (_syntax.PassedByRef && fldtype.IsReferenceType && fldtype.SpecialType != SpecialType.System_String))  // we can cache the default value even for Refs if it is an immutable value
                     {
                         // Func<Context, PhpValue>
                         fldtype = DeclaringCompilation.GetWellKnownType(WellKnownType.System_Func_T2).Construct(
@@ -111,7 +122,7 @@ namespace Pchp.CodeAnalysis.Symbols
             _relindex = relindex;
             _ptagOpt = ptagOpt;
             _initializer = (syntax.InitValue != null)
-                ? new SemanticsBinder(DeclaringCompilation, locals: null, routine: routine, self: routine.ContainingType as SourceTypeSymbol)
+                ? new SemanticsBinder(DeclaringCompilation, routine.ContainingFile.SyntaxTree, locals: null, routine: null, self: routine.ContainingType as SourceTypeSymbol)
                     .BindWholeExpression(syntax.InitValue, BoundAccess.Read)
                     .SingleBoundElement()
                 : null;
@@ -136,6 +147,11 @@ namespace Pchp.CodeAnalysis.Symbols
 
         public FormalParam Syntax => _syntax;
 
+        /// <summary>
+        /// The parameter is a constructor property.
+        /// </summary>
+        public bool IsConstructorProperty => _syntax.IsConstructorProperty;
+
         internal sealed override TypeSymbol Type
         {
             get
@@ -153,7 +169,7 @@ namespace Pchp.CodeAnalysis.Symbols
         /// Gets value indicating that if the parameters type is a reference type,
         /// it is not allowed to pass a null value.
         /// </summary>
-        public bool IsNotNull
+        public override bool HasNotNull
         {
             get
             {
@@ -293,7 +309,7 @@ namespace Pchp.CodeAnalysis.Symbols
             }
 
             // [NotNull]
-            if (IsNotNull && Type.IsReferenceType)
+            if (HasNotNull && Type.IsReferenceType)
             {
                 yield return DeclaringCompilation.CreateNotNullAttribute();
             }

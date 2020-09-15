@@ -84,6 +84,8 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public virtual TResult VisitArrayItem(BoundArrayItemEx x) => DefaultVisitOperation(x);
 
+        public virtual TResult VisitArrayItemOrd(BoundArrayItemOrdEx x) => DefaultVisitOperation(x);
+
         public virtual TResult VisitInstanceOf(BoundInstanceOfEx x) => DefaultVisitOperation(x);
 
         public virtual TResult VisitGlobalConstUse(BoundGlobalConst x) => DefaultVisitOperation(x);
@@ -100,7 +102,11 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public virtual TResult VisitOffsetExists(BoundOffsetExists x) => DefaultVisitOperation(x);
 
+        public virtual TResult VisitTryGetItem(BoundTryGetItem x) => DefaultVisitOperation(x);
+
         public virtual TResult VisitLambda(BoundLambda x) => DefaultVisitOperation(x);
+
+        public virtual TResult VisitThrow(BoundThrowExpression x) => DefaultVisitOperation(x);
 
         public virtual TResult VisitEval(BoundEvalEx x) => DefaultVisitOperation(x);
 
@@ -121,8 +127,6 @@ namespace Pchp.CodeAnalysis.Semantics
         public virtual TResult VisitExpressionStatement(BoundExpressionStatement x) => DefaultVisitOperation(x);
 
         public virtual TResult VisitReturn(BoundReturnStatement x) => DefaultVisitOperation(x);
-
-        public virtual TResult VisitThrow(BoundThrowStatement x) => DefaultVisitOperation(x);
 
         public virtual TResult VisitFunctionDeclaration(BoundFunctionDeclStatement x) => DefaultVisitOperation(x);
 

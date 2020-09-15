@@ -250,6 +250,15 @@ namespace Pchp.Core.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Argument {0} must be callable, {1} given.
+        /// </summary>
+        public static string argument_not_callable {
+            get {
+                return ResourceManager.GetString("argument_not_callable", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Argument #{0} should be passed by reference.
         /// </summary>
         public static string argument_not_passed_byref {
@@ -2322,6 +2331,15 @@ namespace Pchp.Core.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Supplied resource is not a valid &apos;stream&apos; resource.
+        /// </summary>
+        public static string invalid_socket_resource {
+            get {
+                return ResourceManager.GetString("invalid_socket_resource", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Supplied resource is not a valid Socket Stream resource.
         /// </summary>
         public static string invalid_socket_stream_resource {
@@ -2835,6 +2853,15 @@ namespace Pchp.Core.Resources {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Cannot add element to the array as the next element is already occupied.
+        /// </summary>
+        public static string next_array_key_unavailable {
+            get {
+                return ResourceManager.GetString("next_array_key_unavailable", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Class &apos;{0}&apos; has no constructor defined - using default constructor and ignoring arguments.
         /// </summary>
         public static string no_ctor_defined {
@@ -3031,9 +3058,9 @@ namespace Pchp.Core.Resources {
                 return ResourceManager.GetString("object_could_not_be_converted", resourceCulture);
             }
         }
-        
+
         /// <summary>
-        ///   Looks up a localized string similar to An object of type &apos;{0}&apos; used as an array.
+        ///   Looks up a localized string similar to Cannot use object of type {0} as array.
         /// </summary>
         public static string object_used_as_array {
             get {

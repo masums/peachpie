@@ -28,7 +28,7 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
             _type = type;
 
             //
-            IsNullable = type == PhpTypeCode.Null;
+            IsNullable = type == PhpTypeCode.Null || type == PhpTypeCode.Mixed;
         }
 
         /// <summary>
@@ -66,6 +66,7 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
                 case PhpTypeCode.Null: return ct.Object.Symbol;
                 case PhpTypeCode.Iterable: return ct.PhpValue.Symbol; // array | Traversable
                 case PhpTypeCode.Callable: return ct.PhpValue.Symbol; // array | string | object
+                case PhpTypeCode.Mixed: return ct.PhpValue.Symbol; // mixed
                 default:
                     throw ExceptionUtilities.UnexpectedValue(_type);
             }
@@ -89,6 +90,7 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
                 case PhpTypeCode.Null: return ctx.GetNullTypeMask();
                 case PhpTypeCode.Iterable: result = ctx.GetArrayTypeMask() | ctx.GetTypeMask(ctx.BoundTypeRefFactory.TraversableTypeRef, true); break;   // array | Traversable
                 case PhpTypeCode.Callable: result = ctx.GetArrayTypeMask() | ctx.GetStringTypeMask() | ctx.GetSystemObjectTypeMask(); break;// array | string | object
+                case PhpTypeCode.Mixed: result = TypeRefMask.AnyType; break;
                 default:
                     throw ExceptionUtilities.UnexpectedValue(_type);
             }
@@ -157,12 +159,12 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
 
         public override ITypeSymbol ResolveTypeSymbol(PhpCompilation compilation)
         {
-            if (this.ResolvedType.IsValidType())
+            if (this.ResolvedType != null)
             {
                 return this.ResolvedType;
             }
 
-            if (_self == null || _self.IsTraitType())
+            if (_self == null || _self.IsTrait)
             {
                 // no self, parent, static resolvable in compile-time:
                 return new MissingMetadataTypeSymbol(ToString(), 0, false);
@@ -335,25 +337,26 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
 
     #region BoundClassTypeRef
 
-    [DebuggerDisplay("BoundClassTypeRef ({_qname})")]
+    [DebuggerDisplay("BoundClassTypeRef ({ToString(),nq})")]
     sealed class BoundClassTypeRef : BoundTypeRef
     {
-        public QualifiedName ClassName => _qname;
-        readonly QualifiedName _qname;
+        public QualifiedName ClassName { get; }
 
         readonly SourceRoutineSymbol _routine;
         readonly SourceTypeSymbol _self;
+        readonly int _arity;
 
-        public BoundClassTypeRef(QualifiedName qname, SourceRoutineSymbol routine, SourceTypeSymbol self)
+        public BoundClassTypeRef(QualifiedName qname, SourceRoutineSymbol routine, SourceTypeSymbol self, int arity = -1)
         {
             if (qname.IsReservedClassName)
             {
                 throw new ArgumentException();
             }
 
-            _qname = qname;
+            ClassName = qname;
             _routine = routine;
             _self = self;
+            _arity = arity;
         }
 
         public override bool IsObject => true;
@@ -369,7 +372,7 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
             {
                 // CALL <ctx>.GetDeclaredType(<typename>, autoload: true)
                 cg.EmitLoadContext();
-                cg.Builder.EmitStringConstant(_qname.ToString());
+                cg.Builder.EmitStringConstant(ClassName.ToString());
                 cg.Builder.EmitBoolConstant(true);
 
                 return cg.EmitCall(ILOpCode.Call, throwOnError
@@ -389,13 +392,16 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
 
             if (_self != null)
             {
-                if (_self.FullName == _qname) type = _self;
-                else if (_self.BaseType is IPhpTypeSymbol phpt && phpt.FullName == _qname) type = _self.BaseType;
+                if (_self.FullName == ClassName) type = _self;
+                else if (_self.BaseType != null && _self.BaseType.PhpQualifiedName() == ClassName) type = _self.BaseType;
             }
 
             if (type == null)
             {
-                type = (TypeSymbol)compilation.GlobalSemantics.ResolveType(_qname);
+                type = (_arity <= 0)
+                 ? (TypeSymbol)compilation.GlobalSemantics.ResolveType(ClassName)
+                 // generic types only exist in external references, use this method to resolve the symbol including arity (needs metadataname instead of QualifiedName)
+                 : compilation.GlobalSemantics.GetTypeFromNonExtensionAssemblies(MetadataHelpers.ComposeAritySuffixedMetadataName(ClassName.ClrName(), _arity));
             }
 
             var containingFile = _routine?.ContainingFile ?? _self?.ContainingFile;
@@ -440,18 +446,18 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
             return (ResolvedType = type);
         }
 
-        public override string ToString() => _qname.ToString();
+        public override string ToString() => ClassName.ToString();
 
         public override TypeRefMask GetTypeRefMask(TypeRefContext ctx) => ctx.GetTypeMask(this, true);
 
-        public override bool Equals(IBoundTypeRef other) => base.Equals(other) || (other is BoundClassTypeRef ct && ct._qname == this._qname && ct.TypeArguments.IsDefaultOrEmpty);
+        public override bool Equals(IBoundTypeRef other) => base.Equals(other) || (other is BoundClassTypeRef ct && ct.ClassName == this.ClassName && ct.TypeArguments.IsDefaultOrEmpty);
     }
 
     #endregion
 
     #region BoundGenericClassTypeRef
 
-    [DebuggerDisplay("BoundGenericClassTypeRef ({_qname}`{_typeArguments.Length})")]
+    [DebuggerDisplay("BoundGenericClassTypeRef ({_targetType,nq}`{_typeArguments.Length})")]
     sealed class BoundGenericClassTypeRef : BoundTypeRef
     {
         readonly IBoundTypeRef _targetType;
@@ -462,6 +468,8 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
             _targetType = targetType ?? throw ExceptionUtilities.ArgumentNull(nameof(targetType));
             _typeArguments = typeArguments;
         }
+
+        public override bool IsObject => true;
 
         public override ImmutableArray<IBoundTypeRef> TypeArguments => _typeArguments.CastArray<IBoundTypeRef>();
 
@@ -524,26 +532,25 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
         public BoundIndirectTypeRef(BoundExpression typeExpression, bool objectTypeInfoSemantic)
         {
             _typeExpression = typeExpression ?? throw ExceptionUtilities.ArgumentNull();
-            _objectTypeInfoSemantic = objectTypeInfoSemantic;
+            ObjectTypeInfoSemantic = objectTypeInfoSemantic;
         }
 
         public BoundIndirectTypeRef Update(BoundExpression typeExpression, bool objectTypeInfoSemantic)
         {
-            if (typeExpression == _typeExpression && objectTypeInfoSemantic == _objectTypeInfoSemantic)
+            if (typeExpression == _typeExpression && objectTypeInfoSemantic == ObjectTypeInfoSemantic)
             {
                 return this;
             }
             else
             {
-                return new BoundIndirectTypeRef(typeExpression, _objectTypeInfoSemantic).WithSyntax(PhpSyntax);
+                return new BoundIndirectTypeRef(typeExpression, ObjectTypeInfoSemantic).WithSyntax(PhpSyntax);
             }
         }
 
         /// <summary>
         /// Gets value determining the indirect type reference can refer to an object instance which type is used to get the type info.
         /// </summary>
-        public bool ObjectTypeInfoSemantic => _objectTypeInfoSemantic;
-        readonly bool _objectTypeInfoSemantic;
+        public bool ObjectTypeInfoSemantic { get; }
 
         /// <summary>
         /// Always <c>false</c>.
@@ -558,7 +565,25 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
 
         public void EmitClassName(CodeGenerator cg)
         {
-            cg.EmitConvert(_typeExpression, cg.CoreTypes.String);
+            if (ObjectTypeInfoSemantic)
+            {
+                // Template: (<expr> as object).GetPhpTypeInfo().Name
+                cg.EmitAsObject(_typeExpression.Emit(cg), out var isnull);
+
+                if (isnull)
+                {
+                    // ERR
+                }
+
+                cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Dynamic.GetPhpTypeInfo_Object); // PhpTypeInfo
+                cg.EmitCall(ILOpCode.Call, cg.CoreMethods.Operators.GetName_PhpTypeInfo.Getter)
+                    .Expect(SpecialType.System_String);
+            }
+            else
+            {
+                // (string)
+                cg.EmitConvert(_typeExpression, cg.CoreTypes.String);
+            }
         }
 
         /// <summary>
@@ -568,7 +593,7 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
         {
             get
             {
-                if (_objectTypeInfoSemantic && _typeExpression is BoundVariableRef varref)
+                if (ObjectTypeInfoSemantic && _typeExpression is BoundVariableRef varref)
                 {
                     return varref.Variable is ThisVariableReference;
                 }
@@ -665,6 +690,7 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
         public BoundMultipleTypeRef(ImmutableArray<BoundTypeRef> trefs)
         {
             this.TypeRefs = trefs;
+            this.IsNullable = trefs.Any(t => t.IsNullable);
         }
 
         public override ITypeSymbol EmitLoadTypeInfo(CodeGenerator cg, bool throwOnError = false)
@@ -674,7 +700,26 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
 
         public override ITypeSymbol ResolveTypeSymbol(PhpCompilation compilation)
         {
-            throw new NotImplementedException();
+            var result = (TypeSymbol)TypeRefs[0].ResolveTypeSymbol(compilation);
+
+            for (int i = 1; i < TypeRefs.Length; i++)
+            {
+                var tref = TypeRefs[i];
+                if (tref is BoundPrimitiveTypeRef pt && pt.TypeCode == PhpTypeCode.Null)
+                {
+                    Debug.Assert(IsNullable);
+                    continue;
+                }
+
+                result = compilation.Merge(result, (TypeSymbol)tref.ResolveTypeSymbol(compilation));
+            }
+
+            //if (IsNullable)
+            //{
+            //    result = compilation.MergeNull(result);
+            //}
+
+            return result;
         }
 
         public override string ToString() => string.Join("|", TypeRefs);
@@ -686,6 +731,11 @@ namespace Pchp.CodeAnalysis.Semantics.TypeRef
             foreach (var t in TypeRefs)
             {
                 result |= t.GetTypeRefMask(ctx);
+            }
+
+            if (IsNullable)
+            {
+                result |= ctx.GetNullTypeMask();
             }
 
             return result;

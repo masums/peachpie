@@ -1,4 +1,5 @@
-﻿using Pchp.Core;
+﻿using Microsoft.Extensions.ObjectPool;
+using Pchp.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -33,9 +34,9 @@ namespace Pchp.Library
         /// <exception cref="ArgumentNullException"><paramref name="str"/> is a <B>null</B> reference.</exception>
         public static string/*!*/ AddCSlashes(string/*!*/ str, bool singleQuotes = true, bool doubleQuotes = true, bool nul = true)
         {
-            if (str == null) throw new ArgumentNullException("str");
+            if (str == null) throw new ArgumentNullException(nameof(str));
 
-            StringBuilder result = new StringBuilder(str.Length);
+            var result = StringBuilderUtilities.Pool.Get();
 
             string double_quotes = doubleQuotes ? "\\\"" : "\"";
             string single_quotes = singleQuotes ? @"\'" : "'";
@@ -54,7 +55,7 @@ namespace Pchp.Library
                 }
             }
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -67,33 +68,47 @@ namespace Pchp.Library
         /// </returns>
         public static string/*!*/ StripCSlashes(string/*!*/ str)
         {
-            if (str == null) throw new ArgumentNullException("str");
-            if (str == "") return "";
+            if (str == null)
+            {
+                throw new ArgumentNullException(nameof(str));
+            }
 
-            StringBuilder result = new StringBuilder(str.Length);
+            if (str.Length == 0)
+            {
+                return string.Empty;
+            }
 
-            int i = 0;
-            while (i < str.Length - 1)
+            var result = StringBuilderUtilities.Pool.Get();
+            int from = 0;   // plain chunk start
+
+            for (int i = 0; i < str.Length; i++)
             {
                 if (str[i] == '\\')
                 {
-                    if (str[i + 1] == '0')
-                        result.Append('\0');
-                    else
-                        result.Append(str[i + 1]); // PHP strips all slashes, not only quotes and slash
+                    // 
+                    result.Append(str, from, i - from);
 
-                    i += 2;
-                }
-                else
-                {
-                    result.Append(str[i]);
-                    i++;
+                    //
+                    if (++i < str.Length)
+                    {
+                        // PHP strips all slashes, not only quotes and slash
+                        // "\0" has a special meaning => '\0'
+                        var slashed = str[i];
+                        result.Append(slashed == '0' ? '\0' : slashed);
+                    }
+
+                    from = i + 1;
                 }
             }
-            if (i < str.Length && str[i] != '\\')
-                result.Append(str[i]);
 
-            return result.ToString();
+            //
+            if (from < str.Length)
+            {
+                result.Append(str, from, str.Length - from);
+            }
+
+            //
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -104,9 +119,9 @@ namespace Pchp.Library
         /// <exception cref="ArgumentNullException"><paramref name="str"/> is a <B>null</B> reference.</exception>
         public static string/*!*/ AddDbSlashes(string/*!*/ str)
         {
-            if (str == null) throw new ArgumentNullException("str");
+            if (str == null) throw new ArgumentNullException(nameof(str));
 
-            StringBuilder result = new StringBuilder(str.Length);
+            StringBuilder result = StringBuilderUtilities.Pool.Get();
 
             for (int i = 0; i < str.Length; i++)
             {
@@ -119,7 +134,7 @@ namespace Pchp.Library
                 }
             }
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -129,9 +144,9 @@ namespace Pchp.Library
         /// <returns>String with replaced characters.</returns>
         public static string/*!*/ StripDbSlashes(string/*!*/ str)
         {
-            if (str == null) throw new ArgumentNullException("str");
+            if (str == null) throw new ArgumentNullException(nameof(str));
 
-            StringBuilder result = new StringBuilder(str.Length);
+            var result = StringBuilderUtilities.Pool.Get();
 
             int i = 0;
             while (i < str.Length - 1)
@@ -155,7 +170,7 @@ namespace Pchp.Library
             if (i < str.Length)
                 result.Append(str[i]);
 
-            return result.ToString();
+            return StringBuilderUtilities.GetStringAndReturn(result);
         }
 
         /// <summary>
@@ -193,7 +208,7 @@ namespace Pchp.Library
         /// In case if binary string, the conversion routine respects given <paramref name="charSet"/>.
         /// </summary>
         /// <param name="str">String to be converted to unicode string.</param>
-        /// <param name="charSet">Character set used to encode binary string to <see cref="System.String"/>.</param>
+        /// <param name="charSet">Character set used to encode binary string to <see cref="string"/>.</param>
         /// <returns>String representation of <paramref name="str"/>.</returns>
         internal static string ToString(this PhpString str, string charSet)
         {
@@ -204,11 +219,13 @@ namespace Pchp.Library
 
             Encoding encoding;
 
-            if (str.ContainsBinaryData)
+            if (str.ContainsBinaryData && !string.IsNullOrEmpty(charSet))
             {
-                encoding = Encoding.GetEncoding(charSet);
-
-                if (encoding == null)
+                try
+                {
+                    encoding = Encoding.GetEncoding(charSet);
+                }
+                catch (ArgumentException)
                 {
                     //throw new ArgumentException(string.Format(Strings.arg_invalid_value, "charSet", charSet), "charSet");
                     throw new ArgumentException("", nameof(charSet));   // TODO: Err
@@ -221,7 +238,7 @@ namespace Pchp.Library
             }
 
             //
-            return str.ToString(Encoding.UTF8);
+            return str.ToString(encoding);
         }
 
         /// <summary>
@@ -253,21 +270,248 @@ namespace Pchp.Library
         /// <summary>
         /// Determines whether two strings are equal while ignoring casing.
         /// </summary>
-        public static bool EqualsOrdinalIgnoreCase(this string str1, string str2) => string.Equals(str1, str2, StringComparison.OrdinalIgnoreCase);
+        public static bool EqualsOrdinalIgnoreCase(this string str1, string str2) => Core.Utilities.StringUtils.EqualsOrdinalIgnoreCase(str1, str2);
+
+        /// <summary>
+        /// Determines whether two strings are equal while ignoring casing.
+        /// </summary>
+        public static bool EqualsOrdinalIgnoreCase(this ReadOnlySpan<char> str1, ReadOnlySpan<char> str2) => Core.Utilities.StringUtils.EqualsOrdinalIgnoreCase(str1, str2);
+
+        /// <summary>
+        /// Determines whether two strings are equal while ignoring casing.
+        /// </summary>
+        public static bool EqualsOrdinalIgnoreCase(this ReadOnlySpan<char> str1, string str2) => Core.Utilities.StringUtils.EqualsOrdinalIgnoreCase(str1, str2);
 
         /// <summary>
         /// Decodes given json encoded string.
         /// </summary>
         public static PhpValue JsonDecode(string value)
         {
-            var options = new PhpSerialization.JsonSerializer.DecodeOptions();
-            var scanner = new Json.JsonScanner(new StringReader(value), options);
-            var parser = new Json.Parser(options)
+            return PhpSerialization.JsonSerializer.ObjectReader.Deserialize(Encoding.UTF8.GetBytes(value).AsSpan(), new System.Text.Json.JsonReaderOptions
             {
-                Scanner = scanner,
-            };
+                AllowTrailingCommas = true,
+                CommentHandling = System.Text.Json.JsonCommentHandling.Skip,
+            }, JsonSerialization.JsonDecodeOptions.JSON_THROW_ON_ERROR);
+        }
 
-            return parser.Parse() ? parser.Result : throw new FormatException();
+        /// <summary>
+        /// Gets newline character sequence length at given position.
+        /// If there is no newline sequence, <c>0</c> is returned.
+        /// </summary>
+        public static int IsNewLine(string text, int index)
+        {
+            if (text != null && index < text.Length)
+            {
+                return text[index] switch
+                {
+                    '\n' => (index + 1 < text.Length && text[index + 1] == '\r') ? 2 : 1,
+                    '\r' => (index + 1 < text.Length && text[index + 1] == '\n') ? 2 : 1,
+                    '\u2028' => 1, // Unicode Line Separator
+                    _ => 0,
+                };
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Removes all occurances of characters.
+        /// </summary>
+        public static string RemoveAny(this string text, params char[] anyOf)
+        {
+            if (string.IsNullOrEmpty(text) || anyOf.Length == 0)
+            {
+                return text;
+            }
+
+            int startIndex = 0;
+            StringBuilder tmp = null;
+
+            for (; ; )
+            {
+                var idx = text.IndexOfAny(anyOf, startIndex);
+                if (idx < 0)
+                {
+                    break;
+                }
+
+                // lazily create string builder and append text without found characters:
+                tmp ??= StringBuilderUtilities.Pool.Get();
+                tmp.Append(text, startIndex, idx - startIndex);
+
+                startIndex = idx + 1;
+            }
+
+            if (tmp != null)
+            {
+                tmp.Append(text, startIndex, text.Length - startIndex);
+
+                return StringBuilderUtilities.GetStringAndReturn(tmp);
+            }
+
+            //
+            return text;
+        }
+    }
+
+    internal static class Base64Utils
+    {
+        /// <summary>
+        /// Decodes encoded string, ignores whitespaces and missing `=` characters.
+        /// Silently ignores invalid characters;
+        /// </summary>
+        /// <param name="base64">The input base64 encoded string.</param>
+        /// <param name="strict">If set, invalid characters cause <see cref="FormatException"/>.</param>
+        /// <exception cref="FormatException">Invalid character if <paramref name="strict"/> is set.</exception>
+        public static byte[] FromBase64(ReadOnlySpan<char> base64, bool strict)
+        {
+            // count resulting bytes:
+            var count = CountResultingLength(base64, strict);
+            if (count == 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            int fourbytes = 0;
+            int n = 0;
+
+            var bytes = new byte[count];
+            Span<byte> seq = bytes; // output current sequence of 3 bytes
+
+            foreach (var ch in base64)
+            {
+                var idx = B64ToIndex(ch, false);
+                if (idx < 0) continue;
+
+                Debug.Assert(idx >= 0 && idx <= 64); // 6-bits
+
+                fourbytes = (fourbytes << 6) | (idx);
+
+                if (++n == 4)
+                {
+                    B64_24Bits_to_3Chars(fourbytes, out var a, out var b, out var c);
+
+                    seq[0] = a;
+                    seq[1] = b;
+                    seq[2] = c;
+
+                    seq = seq.Slice(3);
+                    n = 0;
+                    fourbytes = 0;
+                }
+            }
+
+            if (n > 0)
+            {
+                var remaining = 4 - n;
+                fourbytes <<= (6 * remaining);
+
+                B64_24Bits_to_3Chars(fourbytes, out var a, out var b, out var c);
+
+                seq[0] = a;
+                if (n > 2) seq[1] = b;
+            }
+
+            //
+            return bytes;
+        }
+
+        static int CountResultingLength(ReadOnlySpan<char> base64, bool strict)
+        {
+            int validbytes = 0;
+
+            //
+            foreach (var ch in base64)
+            {
+                var idx = B64ToIndex(ch, strict);
+                if (idx >= 0)
+                {
+                    validbytes++;
+                }
+            }
+
+            var count = 3 * Math.DivRem(validbytes, 4, out var n);
+
+            // 
+            if (n > 0)
+            {
+                count++;
+                if (n > 2) count++;
+            }
+
+            return count;
+        }
+
+        static int B64ToIndex(char c, bool strict)
+        {
+            // map:
+            // return map.IndexOf(c);
+
+            // ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
+            // 65 - 90, 97 - 122, 48 - 57, 43, 47
+
+            const int off_A = 0;
+            const int off_a = 26;
+            const int off_0 = 52;
+            const int off_plus = 62;
+            const int off_slash = 63;
+
+            // divide intervals
+
+            if (c >= 'A')
+            {
+                if (c <= 'Z')
+                {
+                    // 65 - 90
+                    return c - 'A' + off_A;
+                }
+
+                // (90 .. )
+                if (c >= 'a' && c <= 'z')
+                {
+                    return c - 'a' + off_a;
+                }
+            }
+            else
+            {
+                // < 65
+
+                if (c >= '0')
+                {
+                    if (c <= '9')
+                    {
+                        return c - '0' + off_0;
+                    }
+
+                    // (57 .. 65)
+                    // nothing
+                }
+                else
+                {
+                    // ( .. 48)
+                    if (c == '+') return off_plus;
+                    if (c == '/') return off_slash;
+                }
+            }
+
+            if (strict && c != '=' && !char.IsWhiteSpace(c))
+            {
+                ThrowBadCharacter();
+            }
+
+            return -1;
+        }
+
+        static void B64_24Bits_to_3Chars(int bits, out byte a, out byte b, out byte c)
+        {
+            a = (byte)(bits >> 16);
+            b = (byte)(bits >> 8);
+            c = (byte)(bits);
+        }
+
+        static void ThrowBadCharacter()
+        {
+            throw new FormatException();
         }
     }
 
@@ -515,5 +759,34 @@ namespace Pchp.Library
         //
         //		  return null;
         //		}		
+    }
+
+    /// <summary>
+    /// <see cref="StringBuilder"/> extensions and pooling.
+    /// </summary>
+    public struct StringBuilderUtilities
+    {
+        /// <summary>
+        /// Gets object pool singleton.
+        /// Uses <see cref="StringBuilderPooledObjectPolicy"/> policy (automatically clears the string builder upon return).
+        /// </summary>
+        public static ObjectPool<StringBuilder> Pool { get; } = new DefaultObjectPoolProvider().Create(new StringBuilderPooledObjectPolicy());
+
+        //static readonly Lazy<ObjectPool<StringBuilder>> s_lazyObjectPool = new Lazy<ObjectPool<StringBuilder>>(
+        //    () => new DefaultObjectPoolProvider().Create(new StringBuilderPooledObjectPolicy()),
+        //    System.Threading.LazyThreadSafetyMode.PublicationOnly);
+
+        /// <summary>
+        /// Gets the <paramref name="sb"/> value as string and return the instance to the <see cref="Pool"/>.
+        /// </summary>
+        /// <param name="sb">String builder instance.</param>
+        /// <returns><paramref name="sb"/> string.</returns>
+        public static string GetStringAndReturn(StringBuilder sb)
+        {
+            Debug.Assert(sb != null);
+            var value = sb.ToString();
+            Pool.Return(sb);
+            return value;
+        }
     }
 }

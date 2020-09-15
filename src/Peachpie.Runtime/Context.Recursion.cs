@@ -10,14 +10,6 @@ namespace Pchp.Core
     {
         struct RecursionCheckKey : IEquatable<RecursionCheckKey>
         {
-            public class EqualityComparer : IEqualityComparer<RecursionCheckKey>
-            {
-                public static readonly EqualityComparer Instance = new EqualityComparer();
-                private EqualityComparer() { }
-                public bool Equals(RecursionCheckKey x, RecursionCheckKey y) => x.Equals(y);
-                public int GetHashCode(RecursionCheckKey obj) => obj.GetHashCode();
-            }
-
             readonly object _key;
             readonly int _subkey;
 
@@ -30,13 +22,12 @@ namespace Pchp.Core
 
             public bool Equals(RecursionCheckKey other) => _subkey == other._subkey && _key.Equals(other._key);
             public override int GetHashCode() => _key.GetHashCode() ^ _subkey;
-            public override bool Equals(object obj) => obj is RecursionCheckKey && Equals((RecursionCheckKey)obj);
+            public override bool Equals(object obj) => obj is RecursionCheckKey key && Equals(key);
         }
 
         public struct RecursionCheckToken : IDisposable
         {
-            readonly Stack<RecursionCheckKey> _list;
-            readonly bool _isrecursion;
+            Stack<RecursionCheckKey> Pending { get; }
 
             public RecursionCheckToken(Context ctx, object key, int subkey = 0)
                 : this(ctx, new RecursionCheckKey(key, subkey))
@@ -44,14 +35,16 @@ namespace Pchp.Core
 
             private RecursionCheckToken(Context ctx, RecursionCheckKey key)
             {
-                _isrecursion = (_list = ctx._recursionPrevention).Contains(key);
-                _list.Push(key);
+                Pending = (ctx._lazyRecursionPrevention ??= new Stack<RecursionCheckKey>());
+
+                IsInRecursion = Pending.Contains(key);
+                Pending.Push(key);
             }
 
             /// <summary>
             /// Gets value indicating whether the key is in recursion.
             /// </summary>
-            public bool IsInRecursion => _isrecursion;
+            public bool IsInRecursion { get; }
 
             /// <summary>
             /// Exits recursion check.
@@ -59,7 +52,7 @@ namespace Pchp.Core
             /// </summary>
             public void Dispose()
             {
-                _list.Pop();
+                Pending.Pop();
             }
         }
 
@@ -67,6 +60,6 @@ namespace Pchp.Core
         /// Set of scopes we are entered into.
         /// Recursion prevention.
         /// </summary>
-        readonly Stack<RecursionCheckKey> _recursionPrevention = new Stack<RecursionCheckKey>();
+        Stack<RecursionCheckKey> _lazyRecursionPrevention;
     }
 }

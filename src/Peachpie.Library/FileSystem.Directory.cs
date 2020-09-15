@@ -17,7 +17,7 @@ namespace Pchp.Library
     /// User-like class encapsulating enumeration of a Directory. 
     /// Uses the PhpDirectory implementation upon PhpWrapper streams.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("standard")]
     public class Directory
     {
         #region Fields
@@ -164,6 +164,7 @@ namespace Pchp.Library
     /// <summary>
     /// Gives access to the directory manipulation and itereation.
     /// </summary>
+    [PhpExtension("standard")]
     public static partial class PhpDirectory
     {
         #region PhpDirectoryContext
@@ -190,6 +191,7 @@ namespace Pchp.Library
         /// <summary>Gets the virtual working directory of the current script.</summary>
         /// <remarks></remarks>
         /// <returns>Absolute path to the current directory.</returns>
+        [return: NotNull]
         public static string getcwd(Context ctx)
         {
             return ctx.WorkingDirectory ?? string.Empty;
@@ -248,6 +250,7 @@ namespace Pchp.Library
         /// <param name="ctx">Runtime context.</param>
         /// <param name="directory">The path to open for listing.</param>
         /// <returns>An instance of <see cref="PHP.Library.Directory"/>.</returns>
+        [return: NotNull]
         public static Directory dir(Context ctx, string directory) => new Directory(ctx, directory);
 
         /// <summary>Returns a directory handle to be used in subsequent 
@@ -360,6 +363,20 @@ namespace Pchp.Library
             dirHandle?.Dispose();
         }
 
+        public const int SCANDIR_SORT_ASCENDING = 0;
+        public const int SCANDIR_SORT_DESCENDING = 1;
+        public const int SCANDIR_SORT_NONE = 2;
+
+        /// <summary>
+        /// <see cref="scandir(Context, string, ScanDirSortOrder)"/> order options.
+        /// </summary>
+        public enum ScanDirSortOrder
+        {
+            Ascending = SCANDIR_SORT_ASCENDING,
+            Descending = SCANDIR_SORT_DESCENDING,
+            None = SCANDIR_SORT_NONE,
+        }
+
         /// <summary>Lists files and directories inside the specified path.</summary>
         /// <remarks>
         /// Returns an array of files and directories from the <paramref name="directory"/>. 
@@ -376,7 +393,7 @@ namespace Pchp.Library
         /// <exception cref="PhpException">In case the specified stream wrapper can not be found
         /// or the desired directory can not be opened.</exception>
         [return: CastToFalse]
-        public static PhpArray scandir(Context ctx, string directory, int sorting_order = 0)
+        public static PhpArray scandir(Context ctx, string directory, ScanDirSortOrder sorting_order = ScanDirSortOrder.Ascending)
         {
             if (PhpStream.ResolvePath(ctx, ref directory, out var wrapper, CheckAccessMode.Directory, CheckAccessOptions.Empty))
             {
@@ -384,13 +401,14 @@ namespace Pchp.Library
                 if (listing != null)
                 {
                     var ret = new PhpArray(listing); // create the array from the system one
-                    if (sorting_order == 1)
+                    switch (sorting_order)
                     {
-                        Arrays.rsort(ctx, ret, ComparisonMethod.String);
-                    }
-                    else
-                    {
-                        Arrays.sort(ctx, ret, ComparisonMethod.String);
+                        case ScanDirSortOrder.Ascending:
+                            Arrays.sort(ctx, ret, ComparisonMethod.String);
+                            break;
+                        case ScanDirSortOrder.Descending:
+                            Arrays.rsort(ctx, ret, ComparisonMethod.String);
+                            break;
                     }
                     return ret;
                 }

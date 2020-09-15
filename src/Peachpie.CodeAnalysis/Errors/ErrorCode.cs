@@ -26,6 +26,8 @@ namespace Pchp.CodeAnalysis.Errors
         //
         FTL_InvalidInputFileName = 3000,
 
+        FTL_BadCodepage = 3016,
+
         //
         // Errors
         //
@@ -135,6 +137,23 @@ namespace Pchp.CodeAnalysis.Errors
         ERR_CannotEmbedWithoutPdb,
         /// <summary>No overload for method {0} can be called.</summary>
         ERR_NoMatchingOverload,
+        /// <summary>Default value for parameter ${0} with a {1} type can only be {1} or NULL, {2} given</summary>
+        ERR_DefaultParameterValueTypeMismatch,
+        /// <summary>Constant expression contains invalid operations</summary>
+        ERR_InvalidConstantExpression,
+        /// <summary>Using $this when not in object context</summary>
+        ERR_ThisOutOfObjectContext,
+        /// <summary>Cannot set read-only property {0}::${1}</summary>
+        ERR_ReadOnlyPropertyWritten,
+        /// <summary>Only the last parameter can be variadic</summary>
+        ERR_VariadicParameterNotLast,
+        ERR_CtorPropertyVariadic,
+        ERR_CtorPropertyAbstractCtor,
+        ERR_CtorPropertyNotCtor,
+        ERR_CtorPropertyStaticCtor,
+        /// <summary>Property {0}::${1} cannot have type {2}</summary>
+        ERR_PropertyTypeNotAllowed,
+
         //
         // Warnings
         //
@@ -175,7 +194,7 @@ namespace Pchp.CodeAnalysis.Errors
         WRN_CloneNonObject,
         /// <summary>Using non-iterable type in foreach: {0}.</summary>
         WRN_ForeachNonIterable,
-        /// <summary>Wrong number of arguments in {0}.</summary>
+        /// <summary>Call to '{0}()' expects {1} argument(s), {2} given.</summary>
         WRN_FormatStringWrongArgCount,
         /// <summary>Missing the call of parent::__construct from {0}::__construct.</summary>
         WRN_ParentCtorNotCalled,
@@ -185,6 +204,16 @@ namespace Pchp.CodeAnalysis.Errors
         WRN_FieldPhpDocAssignIncompatible,
         /// <summary>Method {0}::__toString() must return a string value</summary>
         WRN_ToStringMustReturnString,
+        /// <summary>Argument has no value, parameter will be always NULL</summary>
+        WRN_ArgumentVoid,
+        /// <summary>PCRE pattern parse error: {0} at offset {1}</summary>
+        WRN_PCRE_Pattern_Error,
+        /// <summary>{0} '{1}' is already defined</summary>
+        WRN_TypeNameInUse,
+        /// <summary>Script file '{0}' could not be resolved, the script inclusion is unbound.</summary>
+        WRN_CannotIncludeFile,
+        /// <summary>Called from the global scope</summary>
+        WRN_CalledFromGlobalScope,
 
         //
         // Visible information
@@ -192,9 +221,11 @@ namespace Pchp.CodeAnalysis.Errors
         INF_UnableToLoadSomeTypesInAnalyzer = 6000,
         INF_EvalDiscouraged,
         INF_RedundantCast,
-        /// <summary>Wrong case in class name '{0}', expected '{1}'.</summary>
-        INF_ClassNameWrongCase,
+        /// <summary>Name '{0}' does not match the expected name '{1}', letter casing mismatch.</summary>
+        INF_TypeNameCaseMismatch,
         /// <summary></summary>
         INF_DestructDiscouraged,
+        /// <summary>Overriden function name '{0}' does not match it's parent name '{1}', letter casing mismatch.</summary>
+        INF_OverrideNameCaseMismatch,
     }
 }

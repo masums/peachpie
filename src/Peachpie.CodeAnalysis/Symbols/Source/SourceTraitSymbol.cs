@@ -53,9 +53,9 @@ namespace Pchp.CodeAnalysis.Symbols
             }
         }
 
-        protected override IEnumerable<MethodSymbol> CreateInstanceConstructors()
+        protected override ImmutableArray<MethodSymbol> CreateInstanceConstructors()
         {
-            yield return new SynthesizedPhpTraitCtorSymbol(this);
+            return ImmutableArray.Create<MethodSymbol>(new SynthesizedPhpTraitCtorSymbol(this));
         }
 
         public override bool IsTrait => true;
@@ -76,6 +76,8 @@ namespace Pchp.CodeAnalysis.Symbols
         protected override SourceTypeSymbol NewSelf() => new SourceTraitTypeSymbol(ContainingFile, Syntax);
 
         protected override MethodSymbol CreateSourceMethod(MethodDecl m) => new SourceTraitMethodSymbol(this, m);
+
+        //public override string MetadataName => MetadataHelpers.ComposeAritySuffixedMetadataName(base.MetadataName, Arity);
 
         public override int Arity => TypeParameters.Length;
         public override ImmutableArray<TypeParameterSymbol> TypeParameters => _typeParameters;

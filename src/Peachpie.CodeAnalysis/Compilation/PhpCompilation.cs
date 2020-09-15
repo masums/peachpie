@@ -28,7 +28,7 @@ namespace Pchp.CodeAnalysis
         MethodSymbol _lazyMainMethod;
         readonly PhpCompilationOptions _options;
 
-        internal ImmutableArray<IObserver<object>> Observers => _options.Observers;
+        internal ImmutableArray<IObserver<object>> EventSources => _options.EventSources;
 
         Task<IEnumerable<Diagnostic>> _lazyAnalysisTask;
 
@@ -129,7 +129,7 @@ namespace Pchp.CodeAnalysis
                     yield return "console";
                 }
 
-                if (this.Options.OptimizationLevel == OptimizationLevel.Debug)
+                if (this.Options.OptimizationLevel.IsDebug())
                 {
                     yield return "DEBUG";
                 }
@@ -151,7 +151,6 @@ namespace Pchp.CodeAnalysis
             _wellKnownMemberSignatureComparer = new WellKnownMembersSignatureComparer(this);
 
             _options = options;
-            _tables = new SourceSymbolCollection(this);
             _coreTypes = new CoreTypes(this);
             _coreMethods = new CoreMethods(_coreTypes);
             _anonymousTypeManager = new AnonymousTypeManager(this);
@@ -162,6 +161,8 @@ namespace Pchp.CodeAnalysis
             _referenceManager = (reuseReferenceManager && referenceManager != null)
                 ? referenceManager
                 : new ReferenceManager(MakeSourceAssemblySimpleName(), options.AssemblyIdentityComparer, referenceManager?.ObservedMetadata, options.SdkDirectory);
+
+            _tables = new SourceSymbolCollection(this);
         }
 
         /// <summary>
@@ -180,6 +181,15 @@ namespace Pchp.CodeAnalysis
             bool reuseReferenceManager = false,
             IEnumerable<PhpSyntaxTree> syntaxTrees = null)
         {
+            if (assemblyName == null &&
+                (options == null || ReferenceEquals(options, _options)) &&
+                references == null &&
+                reuseReferenceManager == true &&
+                syntaxTrees == null)
+            {
+                return this;
+            }
+
             var compilation = new PhpCompilation(
                 assemblyName ?? this.AssemblyName,
                 options ?? _options,
@@ -207,6 +217,11 @@ namespace Pchp.CodeAnalysis
         public PhpCompilation WithPhpOptions(PhpCompilationOptions options)
         {
             return Update(options: options);
+        }
+
+        public PhpCompilation WithLangVersion(Version langVersion)
+        {
+            return Update(options: this.Options.WithParseOptions((this.Options.ParseOptions ?? PhpParseOptions.Default).WithLanguageVersion(langVersion)));
         }
 
         public override ImmutableArray<MetadataReference> DirectiveReferences
@@ -906,12 +921,16 @@ namespace Pchp.CodeAnalysis
 
         IEnumerable<EmbeddedText> CollectAdditionalEmbeddedTexts()
         {
-            return this.SourceSymbolCollection
-                .GetFiles()
-                .Select(f => f.SyntaxTree)
-                .Where(tree => tree.IsPharEntry || tree.FilePath.IsPharFile())
-                .Select(tree => EmbeddedText.FromSource(tree.FilePath, tree.GetText()))
-                .ToList();
+            // TODO: if (EmbedPharContentIntoPdb):
+
+            foreach (var f in this.SourceSymbolCollection.GetFiles())
+            {
+                var tree = f.SyntaxTree;
+                if (tree.IsPharEntry || tree.IsPharStub)
+                {
+                    yield return EmbeddedText.FromSource(tree.GetDebugSourceDocumentPath(), tree.GetText());
+                }
+            }
         }
 
         IEnumerable<ResourceDescription> CollectAdditionalManifestResources()
@@ -1047,19 +1066,36 @@ namespace Pchp.CodeAnalysis
         {
             return new ResourceDescription(".source.metadata.resources", () =>
             {
-                var stream = new MemoryStream();
-
                 var table = this.SourceSymbolCollection;
+                var symbols =
+                    // global functions
+                    table.GetFunctions().OfType<SourceRoutineSymbol>()
+                    // classes, interfaces, traits
+                    .Concat<Symbol>(table.GetDeclaredTypes())
+                    // type members - properties, constants
+                    .Concat<Symbol>(table.GetDeclaredTypes().SelectMany(t => t.GetMembers().Where(m => m is SourceRoutineSymbol || m is SourceFieldSymbol)));
 
-                var writer = new System.Resources.ResourceWriter(stream);
-                foreach (var r in table.AllRoutines)
+                var resources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var symbol in symbols)
                 {
-                    var metadata = r.GetSymbolMetadataResource();
+                    var metadata = symbol.GetSymbolMetadataResource();
                     if (!string.IsNullOrEmpty(metadata))
                     {
-                        var id = r.ContainingType.GetFullName() + "." + r.MetadataName;
-                        writer.AddResource(id, metadata);
+                        var id = symbol is SourceTypeSymbol type
+                            ? type.GetFullName()
+                            : symbol.ContainingType.GetFullName() + "." + symbol.MetadataName;
+
+                        resources[id] = metadata;
                     }
+                }
+
+                var stream = new MemoryStream();
+                var writer = new System.Resources.ResourceWriter(stream);
+
+                foreach (var pair in resources)
+                {
+                    writer.AddResource(pair.Key, pair.Value);
                 }
 
                 //
@@ -1093,7 +1129,10 @@ namespace Pchp.CodeAnalysis
                 manifestResources = manifestResources.Concat(SynthesizedResources);
             }
 
-            manifestResources = manifestResources.Concat(new[] { SourceMetadataResource() });
+            if (Options.EmbedSourceMetadata)
+            {
+                manifestResources = manifestResources.Concat(new[] { SourceMetadataResource() });
+            }
 
             PEModuleBuilder moduleBeingBuilt;
             if (_options.OutputKind.IsNetModule())

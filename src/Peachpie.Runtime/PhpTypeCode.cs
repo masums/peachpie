@@ -7,24 +7,19 @@ using System.Threading.Tasks;
 namespace Pchp.Core
 {
     /// <summary>
-    /// Pchp type hierarchy type codes.
+    /// PeachPie type hierarchy type codes.
     /// </summary>
-    public enum PhpTypeCode : int
+    public enum PhpTypeCode : byte
     {
         /// <summary>
-        /// An invalid value, <c>void</c>.
+        /// <c>NULL</c> value.
         /// </summary>
-        Undefined = 0,
+        Null = 0,
 
         /// <summary>
         /// The value is of type boolean.
         /// </summary>
         Boolean,
-
-        /// <summary>
-        /// 32-bit integer value. For compatibility with CLR only.
-        /// </summary>
-        Int32,
 
         /// <summary>
         /// 64-bit integer value.
@@ -57,24 +52,9 @@ namespace Pchp.Core
         Object,
 
         /// <summary>
-        /// <c>callable</c> object.
-        /// </summary>
-        Callable,
-
-        /// <summary>
         /// <see cref="PhpAlias"/> type.
         /// </summary>
         Alias,
-
-        /// <summary>
-        /// A resource object.
-        /// </summary>
-        Resource,
-
-        /// <summary>
-        /// <c>NULL</c> value.
-        /// </summary>
-        Null,
     }
 
     /// <summary>

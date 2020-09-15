@@ -1,6 +1,9 @@
-﻿using System;
+﻿#nullable enable
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -11,7 +14,7 @@ namespace Pchp.Core
     [DebuggerDisplay("{GetDebuggerValue,nq}", Type = "{GetDebuggerType,nq}")]
     [DebuggerNonUserCode, DebuggerStepThrough]
     [StructLayout(LayoutKind.Explicit)]
-    public struct PhpNumber : IComparable<PhpNumber>, IComparable<long>, IComparable<double>, IEquatable<PhpNumber>, IPhpConvertible
+    public readonly struct PhpNumber : IComparable<PhpNumber>, IComparable<long>, IComparable<double>, IEquatable<PhpNumber>, IPhpConvertible
     {
         #region nested enum: NumberType
 
@@ -81,7 +84,7 @@ namespace Pchp.Core
 
         #region Debug
 
-        string GetDebuggerValue { get { return IsLong ? _long.ToString() : _double.ToString(); } }
+        string GetDebuggerValue { get { return IsLong ? _long.ToString() : _double.ToString(CultureInfo.InvariantCulture); } }
 
         string GetDebuggerType { get { return IsLong ? PhpVariable.TypeNameInteger : PhpVariable.TypeNameDouble; } }
 
@@ -1266,6 +1269,11 @@ namespace Pchp.Core
         public static implicit operator long(PhpNumber value) => value.ToLong();
 
         /// <summary>
+        /// Converts given number to <see cref="bool"/>.
+        /// </summary>
+        public static implicit operator bool(PhpNumber value) => value.ToBoolean();
+
+        /// <summary>
         /// Converts given number to <see cref="double"/>.
         /// </summary>
         public static implicit operator double(PhpNumber value) => value.ToDouble();
@@ -1354,8 +1362,6 @@ namespace Pchp.Core
         {
             return IsLong ? _long.ToString() : Convert.ToString(_double, ctx);
         }
-
-        public string ToStringOrThrow(Context ctx) => ToString(ctx);
 
         public object ToClass() => ToObject();
 

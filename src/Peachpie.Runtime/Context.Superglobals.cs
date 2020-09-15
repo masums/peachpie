@@ -38,7 +38,7 @@ namespace Pchp.Core
             /// <param name="name">A unparsed name of variable.</param>
             /// <param name="value">A value to be added.</param>
             /// <param name="subname">A name of intermediate array inserted before the value.</param>
-            public static void AddVariable(PhpArray/*!*/ array, string name, string value, string subname = null)
+            public static void AddVariable(PhpArray/*!*/ array, string name, PhpValue value, string subname = null)
             {
                 NameValueCollectionUtils.AddVariable(array, name, value, subname);
             }
@@ -58,6 +58,60 @@ namespace Pchp.Core
                 {
                     dst.SetItemValue(e.CurrentKey, e.CurrentValue.DeepCopy());
                 }
+            }
+
+            /// <summary>
+            /// Adds a form file to the <c>$_FILES</c> array.
+            /// </summary>
+            /// <param name="files">The $_FILES array.</param>
+            /// <param name="field_name">Form field name.</param>
+            /// <param name="file_name">Original file name, without the directory name.</param>
+            /// <param name="type">Content type.</param>
+            /// <param name="tmp_name">Local full file path where is the uploaded file temporarily stored.</param>
+            /// <param name="error">Error code number.</param>
+            /// <param name="file_length">Uploaded file size in bytes.</param>
+            public static void AddFormFile(PhpArray/*!*/ files, string field_name, string file_name, string type, string tmp_name, int error, long file_length)
+            {
+                // field_name
+                // field_name[]
+                // field_name[key]
+
+                var left = field_name.IndexOf('[');
+                if (left > 0 && left < field_name.Length - 1)
+                {
+                    var right = field_name.IndexOf(']', left + 1);
+                    if (right > 0)
+                    {
+                        // keyed file entry:
+
+                        // the variable name is a key to the "array", dots are replaced by underscores in top-level name:
+                        var field_name_key = new IntStringKey(NameValueCollectionUtils.EncodeTopLevelName(field_name.Substring(0, left)));
+                        var file_entry = NameValueCollectionUtils.EnsureItemArray(files, field_name_key);
+
+                        // file entry key,
+                        // can be a string, empty or a number
+                        var key = Convert.StringToArrayKey(field_name.Substring(left + 1, right - left - 1));
+
+                        NameValueCollectionUtils.EnsureItemArray(file_entry, "name", key, file_name);
+                        NameValueCollectionUtils.EnsureItemArray(file_entry, "type", key, type);
+                        NameValueCollectionUtils.EnsureItemArray(file_entry, "tmp_name", key, tmp_name);
+                        NameValueCollectionUtils.EnsureItemArray(file_entry, "error", key, error);
+                        NameValueCollectionUtils.EnsureItemArray(file_entry, "size", key, file_length);
+
+                        //
+                        return;
+                    }
+                }
+
+                // not keyed:
+                AddVariable(files, field_name, new PhpArray(5)
+                {
+                    { "name", file_name },
+                    { "type", type },
+                    { "tmp_name", tmp_name },
+                    { "error", error },
+                    { "size", file_length },
+                });
             }
 
             /// <summary>
@@ -119,7 +173,7 @@ namespace Pchp.Core
             /// <summary>
             /// Application wide $_ENV array.
             /// </summary>
-            public static PhpArray StaticEnv => static_env ?? (static_env = InitEnv());
+            static PhpArray StaticEnv => s_env ?? (s_env = InitEnv());
 
             static PhpArray InitEnv()
             {
@@ -134,7 +188,9 @@ namespace Pchp.Core
                 return array;
             }
 
-            static PhpArray static_env;
+            public static PhpArray CreateEnvArray() => StaticEnv.DeepCopy();
+
+            static PhpArray s_env;
         }
 
         Superglobals _superglobals;
@@ -146,16 +202,16 @@ namespace Pchp.Core
 
         void InitSuperglobals(ref Superglobals superglobals)
         {
-            var var_order = this.Configuration.Core.VariablesOrder; // TODO
-            var egpcs = this.Configuration.Core.RegisteringOrder;
+            //var var_order = DefaultPhpConfigurationService.Instance.Core.VariablesOrder; // TODO
+            var egpcs = DefaultPhpConfigurationService.Instance.Core?.RegisteringOrder;
 
-            superglobals.env = Superglobals.StaticEnv.DeepCopy();
+            superglobals.env = Superglobals.CreateEnvArray();
             superglobals.get = InitGetVariable();
             superglobals.post = InitPostVariable();
             superglobals.cookie = InitCookieVariable();
             superglobals.server = InitServerVariable();
             superglobals.files = InitFilesVariable();
-            superglobals.session = PhpArray.NewEmpty();
+            superglobals.session = null;    // $_SESSION is NULL if it is not initialized
             superglobals.request = InitRequestVariable(superglobals.get, superglobals.post, superglobals.cookie, egpcs);   // after get, post, cookie
             superglobals.globals = InitGlobals(egpcs);
         }
@@ -186,15 +242,15 @@ namespace Pchp.Core
             }
 
             // adds auto-global variables (overwrites potential existing variables in $GLOBALS):
-            globals[CommonPhpArrayKeys.GLOBALS] = PhpValue.Create(new PhpAlias(PhpValue.Create(globals)));   // &$GLOBALS
-            globals[CommonPhpArrayKeys._ENV] = PhpValue.Create(_superglobals.env);
             globals[CommonPhpArrayKeys._GET] = PhpValue.Create(_superglobals.get);
             globals[CommonPhpArrayKeys._POST] = PhpValue.Create(_superglobals.post);
             globals[CommonPhpArrayKeys._COOKIE] = PhpValue.Create(_superglobals.cookie);
+            globals[CommonPhpArrayKeys._FILES] = PhpValue.Create(_superglobals.files);
+            globals[CommonPhpArrayKeys._ENV] = PhpValue.Create(_superglobals.env);
             globals[CommonPhpArrayKeys._REQUEST] = PhpValue.Create(_superglobals.request);
             globals[CommonPhpArrayKeys._SERVER] = PhpValue.Create(_superglobals.server);
-            globals[CommonPhpArrayKeys._FILES] = PhpValue.Create(_superglobals.files);
             globals[CommonPhpArrayKeys._SESSION] = PhpValue.Create(_superglobals.session);
+            globals[CommonPhpArrayKeys.GLOBALS] = PhpValue.Create(new PhpAlias(PhpValue.Create(globals)));   // &$GLOBALS
 
             //// adds long arrays:
             //if (Configuration.Global.GlobalVariables.RegisterLongArrays)
@@ -221,9 +277,9 @@ namespace Pchp.Core
         /// <summary>Initialize $_REQUEST global variable.</summary>
         protected PhpArray InitRequestVariable(PhpArray get, PhpArray post, PhpArray cookie, string gpcOrder)
         {
-            Debug.Assert(get != null && post != null && cookie != null && gpcOrder != null);
+            Debug.Assert(get != null && post != null && cookie != null);
 
-            if (IsWebApplication)
+            if (IsWebApplication && gpcOrder != null)
             {
                 var requestArray = new PhpArray(get.Count + post.Count + cookie.Count);
 
@@ -278,12 +334,7 @@ namespace Pchp.Core
             get { return _superglobals.globals; }
             set
             {
-                if (value == null)
-                {
-                    throw new ArgumentNullException();  // TODO: ErrCode
-                }
-
-                _superglobals.globals = value;
+                _superglobals.globals[CommonPhpArrayKeys.GLOBALS] = new PhpAlias(_superglobals.globals = value ?? throw new ArgumentNullException());
             }
         }
 
@@ -296,7 +347,7 @@ namespace Pchp.Core
             get { return _superglobals.server; }
             set
             {
-                _superglobals.server = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._SERVER] = _superglobals.server = value ?? throw new ArgumentNullException();
             }
         }
 
@@ -309,7 +360,7 @@ namespace Pchp.Core
             get { return _superglobals.env; }
             set
             {
-                _superglobals.env = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._ENV] = _superglobals.env = value;
             }
         }
 
@@ -322,7 +373,7 @@ namespace Pchp.Core
             get { return _superglobals.request; }
             set
             {
-                _superglobals.request = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._REQUEST] = _superglobals.request = value;
             }
         }
 
@@ -335,7 +386,7 @@ namespace Pchp.Core
             get { return _superglobals.get; }
             set
             {
-                _superglobals.get = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._GET] = _superglobals.get = value;
             }
         }
 
@@ -348,7 +399,7 @@ namespace Pchp.Core
             get { return _superglobals.post; }
             set
             {
-                _superglobals.post = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._POST] = _superglobals.post = value;
             }
         }
 
@@ -361,20 +412,20 @@ namespace Pchp.Core
             get { return _superglobals.files; }
             set
             {
-                _superglobals.files = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._FILES] = _superglobals.files = value;
             }
         }
 
         /// <summary>
         /// An associative array containing session variables available to the current script.
-        /// Cannot be <c>null</c>.
+        /// Can be <c>null</c>.
         /// </summary>
         public PhpArray Session
         {
             get { return _superglobals.session; }
             set
             {
-                _superglobals.session = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._SESSION] = _superglobals.session = value;
             }
         }
 
@@ -387,7 +438,7 @@ namespace Pchp.Core
             get { return _superglobals.cookie; }
             set
             {
-                _superglobals.cookie = value ?? throw new ArgumentNullException();
+                _superglobals.globals[CommonPhpArrayKeys._COOKIE] = _superglobals.cookie = value;
             }
         }
 
@@ -403,7 +454,7 @@ namespace Pchp.Core
             }
             set
             {
-                this.Globals[CommonPhpArrayKeys.HTTP_RAW_POST_DATA] = (PhpValue)value;
+                this.Globals[CommonPhpArrayKeys.HTTP_RAW_POST_DATA] = value;
             }
         }
 

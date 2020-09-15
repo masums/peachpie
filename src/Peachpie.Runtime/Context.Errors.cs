@@ -12,7 +12,7 @@ namespace Pchp.Core
         /// Gets whether error reporting is disabled or enabled.
         /// </summary>
         public bool ErrorReportingDisabled => _errorReportingDisabled != 0; // && !config.ErrorControl.IgnoreAtOperator;
-        int _errorReportingDisabled = 0;
+        int _errorReportingDisabled;
 
         /// <summary>
         /// Disables error reporting. Can be called for multiple times. To enable reporting again 
@@ -55,8 +55,8 @@ namespace Pchp.Core
         protected virtual void AssertFailed(PhpValue action = default)
         {
             // exception to be thrown
-            var userexception = action.IsSet ? action.AsObject() as Exception : null;
-            var usermessage = action.IsSet ? action.AsString() : null;
+            var userexception = action.AsObject() as Exception;
+            var usermessage = action.AsString();
 
             var exception = userexception ?? PhpException.AssertionErrorException(usermessage ?? string.Empty);
 

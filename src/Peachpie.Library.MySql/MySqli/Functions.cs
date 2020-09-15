@@ -35,7 +35,18 @@ namespace Peachpie.Library.MySql.MySqli
         /// <summary>
         /// Closes a previously opened database connection.
         /// </summary>
-        public static bool mysqli_close(mysqli link) => link.close();
+        public static bool mysqli_close(mysqli link)
+        {
+            if (link != null)
+            {
+                return link.close();
+            }
+            else
+            {
+                PhpException.ArgumentNull(nameof(link));
+                return false;
+            }
+        }
 
         /// <summary>
         /// Opens a connection to a mysql server
@@ -149,12 +160,33 @@ namespace Peachpie.Library.MySql.MySqli
         /// <summary>
         /// Selects the default database for database queries.
         /// </summary>
-        public static bool mysqli_select_db(mysqli link, string dbname) => link.select_db(dbname);
+        public static bool mysqli_select_db(mysqli link, string dbname)
+        {
+            if (link != null)
+            {
+                return link.select_db(dbname);
+            }
+            else
+            {
+                PhpException.ArgumentNull(nameof(link));
+                return false;
+            }
+        }
 
         /// <summary>
         /// Performs a query on the database.
         /// </summary>
-        public static PhpValue mysqli_query(mysqli link, PhpString query, int resultmode = Constants.MYSQLI_STORE_RESULT) => link.query(query, resultmode);
+        public static PhpValue mysqli_query(mysqli link, PhpString query, int resultmode = Constants.MYSQLI_STORE_RESULT)
+        {
+            PhpException.ThrowIfArgumentNull(link, 1);
+
+            return link.query(query, resultmode);
+        }
+
+        /// <summary>
+        /// Returns the number of columns for the most recent query on the connection.
+        /// </summary>
+        public static int mysqli_field_count(mysqli link) => link.field_count;
 
         /// <summary>
         /// Returns the auto generated id used in the latest query.

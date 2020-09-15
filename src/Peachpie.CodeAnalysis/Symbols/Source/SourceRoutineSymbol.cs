@@ -52,7 +52,7 @@ namespace Pchp.CodeAnalysis.Symbols
                     // build control flow graph
                     var cfg = new ControlFlowGraph(
                         this.Statements,
-                        SemanticsBinder.Create(DeclaringCompilation, LocalsTable, ContainingType as SourceTypeSymbol));
+                        SemanticsBinder.Create(DeclaringCompilation, ContainingFile.SyntaxTree, LocalsTable, ContainingType as SourceTypeSymbol));
                     cfg.Start.FlowState = state;
 
                     //
@@ -111,6 +111,13 @@ namespace Pchp.CodeAnalysis.Symbols
         /// </summary>
         internal abstract SourceFileSymbol ContainingFile { get; }
 
+        public override ImmutableArray<Location> Locations =>
+            ImmutableArray.Create(
+                Location.Create(
+                    ContainingFile.SyntaxTree,
+                    Syntax is ILangElement element ? element.Span.ToTextSpan() : default
+            ));
+
         public override bool IsUnreachable => (Flags & RoutineFlags.IsUnreachable) != 0;
 
         protected ImmutableArray<ParameterSymbol> _implicitParameters;
@@ -146,8 +153,15 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             // check mandatory behind and optional parameter
             bool foundopt = false;
-            foreach (var p in SyntaxSignature.FormalParams)
+            var ps = SyntaxSignature.FormalParams;
+            for (int i = 0; i < ps.Length; i++)
             {
+                var p = ps[i];
+                if (p == null)
+                {
+                    continue;
+                }
+
                 if (p.InitValue == null)
                 {
                     if (foundopt && !p.IsVariadic)
@@ -158,6 +172,47 @@ namespace Pchp.CodeAnalysis.Symbols
                 else
                 {
                     foundopt = true;
+                }
+
+                //
+                if (p.IsVariadic && i < ps.Length - 1)
+                {
+                    // Fatal Error: variadic parameter (...) must be the last parameter
+                    diagnostic.Add(this, p, Errors.ErrorCode.ERR_VariadicParameterNotLast);
+                }
+
+                // constructor property
+                if (p.IsConstructorProperty)
+                {
+                    if (!string.Equals(this.Name, Devsense.PHP.Syntax.Name.SpecialMethodNames.Construct.Value, StringComparison.InvariantCultureIgnoreCase) ||
+                        !(this is SourceMethodSymbol))
+                    {
+                        // ERR: not a constructor
+                        diagnostic.Add(this, p, Errors.ErrorCode.ERR_CtorPropertyNotCtor);
+                    }
+                    else if (this.IsAbstract || this.ContainingType.IsInterface)
+                    {
+                        diagnostic.Add(this, p, Errors.ErrorCode.ERR_CtorPropertyAbstractCtor);
+                    }
+                    else if (this.IsStatic) // function, static method, static ctor
+                    {
+                        diagnostic.Add(this, p, Errors.ErrorCode.ERR_CtorPropertyStaticCtor);
+                    }
+                    else if (p.TypeHint is PrimitiveTypeRef pt && (
+                        pt.PrimitiveTypeName == PrimitiveTypeRef.PrimitiveType.callable ||
+                        pt.PrimitiveTypeName == PrimitiveTypeRef.PrimitiveType.iterable))
+                    {
+                        diagnostic.Add(this, p, Errors.ErrorCode.ERR_PropertyTypeNotAllowed, this.ContainingType.PhpName(), p.Name, pt.PrimitiveTypeName.ToString());
+                    }
+                    else if (p.TypeHint is ReservedTypeRef rt && (
+                        rt.Type == ReservedTypeRef.ReservedType.@static))
+                    {
+                        diagnostic.Add(this, p, Errors.ErrorCode.ERR_PropertyTypeNotAllowed, this.ContainingType.PhpName(), p.Name, rt.Type.ToString());
+                    }
+                    else if (p.IsVariadic)
+                    {
+                        diagnostic.Add(this, p, Errors.ErrorCode.ERR_CtorPropertyVariadic);
+                    }
                 }
             }
         }
@@ -171,6 +226,11 @@ namespace Pchp.CodeAnalysis.Symbols
 
             foreach (var p in formalparams)
             {
+                if (p == null)
+                {
+                    continue;
+                }
+
                 var ptag = (phpdocOpt != null) ? PHPDoc.GetParamTag(phpdocOpt, pindex, p.Name.Name.Value) : null;
 
                 yield return new SourceParameterSymbol(this, p, relindex: pindex++, ptagOpt: ptag);
@@ -300,6 +360,8 @@ namespace Pchp.CodeAnalysis.Symbols
 
         public override bool CastToFalse => false;  // source routines never cast special values to FALSE
 
+        public override bool HasNotNull => !ReturnsNull;
+
         public override MethodKind MethodKind
         {
             get
@@ -362,6 +424,33 @@ namespace Pchp.CodeAnalysis.Symbols
 
         public override bool ReturnsVoid => ReturnType.SpecialType == SpecialType.System_Void;
 
+        /// <summary>
+        /// Gets value indicating the routine can return <c>null</c>.
+        /// </summary>
+        public bool ReturnsNull
+        {
+            get
+            {
+                var thint = SyntaxReturnType;
+
+                if (thint == null)
+                {
+                    // use the result of type analysis if possible
+                    var tmask = ResultTypeMask;
+
+                    return this.IsOverrideable()
+                        ? true
+                        : tmask.IsAnyType || tmask.IsRef || this.TypeRefContext.IsNull(tmask);
+                }
+                else
+                {
+                    // if type hint is provided,
+                    // only can be NULL if specified
+                    return thint.IsNullable();
+                }
+            }
+        }
+
         public override RefKind RefKind => RefKind.None;
 
         public override TypeSymbol ReturnType => PhpRoutineSymbolExtensions.ConstructClrReturnType(this);
@@ -395,16 +484,24 @@ namespace Pchp.CodeAnalysis.Symbols
                 // ...
             }
 
-            // [NotNullAttribute]
-            // ...
-
             //
             return base.GetAttributes().AddRange(attrs);
         }
 
         public override ImmutableArray<AttributeData> GetReturnTypeAttributes()
         {
-            return base.GetReturnTypeAttributes(); // TODO: [return: NotNull]
+            if (!ReturnsNull)
+            {
+                // [return: NotNull]
+                var returnType = this.ReturnType;
+                if (returnType != null && (returnType.IsReferenceType || returnType.Is_PhpValue())) // only if it makes sense to check for NULL
+                {
+                    return ImmutableArray.Create<AttributeData>(DeclaringCompilation.CreateNotNullAttribute());
+                }
+            }
+
+            //
+            return ImmutableArray<AttributeData>.Empty;
         }
 
         internal override ObsoleteAttributeData ObsoleteAttributeData
@@ -421,41 +518,50 @@ namespace Pchp.CodeAnalysis.Symbols
             }
         }
 
-        internal override string GetSymbolMetadataResource()
-        {
-            //var phpdoc = this.PHPDocBlock;
-            //if (phpdoc != null)
-            //{
-            //    var stream = new System.IO.StringWriter();
-            //    using (var writer = new Roslyn.Utilities.JsonWriter(stream))
-            //    {
-            //        writer.WriteObjectStart();
-            //        writer.Write("doc", ContainingFile.SyntaxTree.GetText().ToString(phpdoc.Span.ToTextSpan()));
-            //        // type:
-            //        // ...
-            //        writer.WriteObjectEnd();
-            //    }
-
-            //    return stream.ToString();
-            //}
-
-            return null;
-        }
-
         /// <summary>
         /// virtual = IsVirtual AND NewSlot 
         /// override = IsVirtual AND !NewSlot
         /// </summary>
         internal override bool IsMetadataNewSlot(bool ignoreInterfaceImplementationChanges = false) => !IsOverride && IsMetadataVirtual(ignoreInterfaceImplementationChanges);
 
-        internal override bool IsMetadataVirtual(bool ignoreInterfaceImplementationChanges = false) => IsVirtual && (!ContainingType.IsSealed || IsOverride || IsAbstract); // do not make method virtual if not necessary
+        internal override bool IsMetadataVirtual(bool ignoreInterfaceImplementationChanges = false)
+        {
+            return IsVirtual && (!ContainingType.IsSealed || IsOverride || IsAbstract || OverrideOfMethod() != null);  // do not make method virtual if not necessary
+        }
+
+        /// <summary>
+        /// Gets value indicating the method is an override of another virtual method.
+        /// In such a case, this method MUST be virtual.
+        /// </summary>
+        private MethodSymbol OverrideOfMethod()
+        {
+            var overrides = ContainingType.ResolveOverrides(DiagnosticBag.GetInstance());   // Gets override resolution matrix. This is already resolved and does not cause an overhead.
+
+            for (int i = 0; i < overrides.Length; i++)
+            {
+                if (overrides[i].Override == this)
+                {
+                    return overrides[i].Method;
+                }
+            }
+
+            return null;
+        }
 
         internal override bool IsMetadataFinal => base.IsMetadataFinal && IsMetadataVirtual(); // altered IsMetadataVirtual -> causes change to '.final' metadata as well
 
         public override string GetDocumentationCommentXml(CultureInfo preferredCulture = null, bool expandIncludes = false, CancellationToken cancellationToken = default(CancellationToken))
         {
-            // TODO: XmlDocumentationCommentCompiler
-            return this.PHPDocBlock?.Summary ?? string.Empty;
+            if (PHPDocBlock != null)
+            {
+                using (var output = new System.IO.StringWriter())
+                {
+                    DocumentationComments.DocumentationCommentCompiler.WriteRoutine(output, this);
+                    return output.ToString();
+                }
+            }
+            //
+            return string.Empty;
         }
     }
 }

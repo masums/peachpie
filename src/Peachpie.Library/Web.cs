@@ -3,15 +3,15 @@ using Pchp.Core.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Net;
-using Pchp.Core.QueryValue;
+using System.Threading;
 
 namespace Pchp.Library
 {
+    [PhpExtension("standard")]
     public static class Web
     {
         #region Constants
@@ -47,24 +47,17 @@ namespace Pchp.Library
         {
             if (string.IsNullOrEmpty(encoded_data))
             {
-                return default(PhpString);
-            }
-
-            //
-            var remainder = encoded_data.Length % 4;
-            if (remainder != 0)
-            {
-                encoded_data = encoded_data.PadRight(encoded_data.Length + 4 - remainder, '=');
+                return default; // FALSE
             }
 
             try
             {
-                return new PhpString(System.Convert.FromBase64String(encoded_data));
+                return new PhpString(Base64Utils.FromBase64(encoded_data.AsSpan(), strict));
             }
             catch (FormatException)
             {
                 PhpException.Throw(PhpError.Warning, Resources.Resources.invalid_base64_encoded_data);
-                return default(PhpString);
+                return default; // FALSE
             }
         }
 
@@ -158,7 +151,18 @@ namespace Pchp.Library
         [return: CastToFalse]
         public static PhpArray parse_url(string url)
         {
-            var match = ParseUrlMethods.ParseUrlRegEx.Match(url ?? string.Empty);
+            url ??= string.Empty;
+
+            if (url.Length == 0)
+            {
+                // empty URL results in following array to be returned:
+                return new PhpArray(1)
+                {
+                    { "path", string.Empty },
+                };
+            }
+
+            var match = ParseUrlMethods.ParseUrlRegEx.Match(url);
 
             if (match == null || !match.Success || match.Groups["port"].Value.Length > 5)   // not matching or port number too long
             {
@@ -222,19 +226,19 @@ namespace Pchp.Library
                 return null;
             }
 
-            PhpArray result = new PhpArray(8);
+            var result = new PhpArray(8);
 
             const char neutralChar = '_';
 
             // store segments into the array (same order as it is in PHP)
-            if (scheme != null) result["scheme"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(scheme, neutralChar);
-            if (host != null) result["host"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(host, neutralChar);
-            if (port != null) result["port"] = (PhpValue)port_int;
-            if (user != null) result["user"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(user, neutralChar);
-            if (pass != null) result["pass"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(pass, neutralChar);
-            if (path != null) result["path"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(path, neutralChar);
-            if (query != null) result["query"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(query, neutralChar);
-            if (fragment != null) result["fragment"] = (PhpValue)ParseUrlMethods.ReplaceControlCharset(fragment, neutralChar);
+            if (scheme != null) result["scheme"] = ParseUrlMethods.ReplaceControlCharset(scheme, neutralChar);
+            if (host != null) result["host"] = ParseUrlMethods.ReplaceControlCharset(host, neutralChar);
+            if (port != null) result["port"] = port_int;
+            if (user != null) result["user"] = ParseUrlMethods.ReplaceControlCharset(user, neutralChar);
+            if (pass != null) result["pass"] = ParseUrlMethods.ReplaceControlCharset(pass, neutralChar);
+            if (path != null) result["path"] = ParseUrlMethods.ReplaceControlCharset(path, neutralChar);
+            if (query != null) result["query"] = ParseUrlMethods.ReplaceControlCharset(query, neutralChar);
+            if (fragment != null) result["fragment"] = ParseUrlMethods.ReplaceControlCharset(fragment, neutralChar);
 
             return result;
         }
@@ -248,30 +252,41 @@ namespace Pchp.Library
 		/// or <c>{schema}:{path}?{query}#{fragment}</c>.
 		/// </param>
         /// <param name="component">Specify one of PHP_URL_SCHEME, PHP_URL_HOST, PHP_URL_PORT, PHP_URL_USER, PHP_URL_PASS, PHP_URL_PATH, PHP_URL_QUERY or PHP_URL_FRAGMENT to retrieve just a specific URL component as a string (except when PHP_URL_PORT is given, in which case the return value will be an integer).</param>
-		public static string parse_url(string url, int component)
+        /// <returns>The URL component or <c>NULL</c> if the requested component is not parsed.</returns>
+		public static PhpValue parse_url(string url, int component)
         {
+            var item = PhpValue.Null;
+
             var array = parse_url(url);
             if (array != null)
             {
-                switch (component)
+                if (component < 0)
                 {
-                    case PHP_URL_FRAGMENT: return array["fragment"].AsString();
-                    case PHP_URL_HOST: return array["host"].AsString();
-                    case PHP_URL_PASS: return array["pass"].AsString();
-                    case PHP_URL_PATH: return array["path"].AsString();
-                    case PHP_URL_PORT: return array["port"].AsString(); // might be null
-                    case PHP_URL_QUERY: return array["query"].AsString();
-                    case PHP_URL_SCHEME: return array["scheme"].AsString();
-                    case PHP_URL_USER: return array["user"].AsString();
+                    // negative {component} results in the whole array to be returned
+                    item = array;
+                }
+                else
+                {
+                    switch (component)
+                    {
+                        case PHP_URL_FRAGMENT: item = array["fragment"]; break;
+                        case PHP_URL_HOST: item = array["host"]; break;
+                        case PHP_URL_PASS: item = array["pass"]; break;
+                        case PHP_URL_PATH: item = array["path"]; break;
+                        case PHP_URL_PORT: item = array["port"]; break;
+                        case PHP_URL_QUERY: item = array["query"]; break;
+                        case PHP_URL_SCHEME: item = array["scheme"]; break;
+                        case PHP_URL_USER: item = array["user"]; break;
 
-                    default:
-                        //PhpException.Throw(PhpError.Warning, LibResources.GetString("arg_invalid_value", "component", component));                        
-                        throw new ArgumentException(nameof(component));
+                        default:
+                            //PhpException.Throw(PhpError.Warning, LibResources.GetString("arg_invalid_value", "component", component));                        
+                            throw new ArgumentException(nameof(component));
+                    }
                 }
             }
 
             //
-            return null;
+            return item;
         }
 
         /// <summary>
@@ -282,7 +297,7 @@ namespace Pchp.Library
         public static void parse_str(string str, out PhpArray result)
         {
             result = new PhpArray();
-            parse_str((LocalVariables)result, str);
+            parse_str(result, str);
         }
 
         /// <summary>
@@ -291,11 +306,11 @@ namespace Pchp.Library
         /// </summary>
         /// <param name="locals">Array of local variables passed from runtime, will be filled with parsed variables. Must not be <c>null</c>.</param>
         /// <param name="str">The string to parse.</param>
-        public static void parse_str(QueryValue<LocalVariables> locals, string str)
+        public static void parse_str([ImportValue(ImportValueAttribute.ValueSpec.Locals)] PhpArray locals, string str)
         {
             if (!string.IsNullOrEmpty(str))
             {
-                UriUtils.ParseQuery(str, locals.Value.Locals.AddVariable);
+                UriUtils.ParseQuery(str, locals.AddVariable);
             }
         }
 
@@ -339,6 +354,14 @@ namespace Pchp.Library
             var httpctx = ctx.HttpPhpContext;
             if (httpctx == null)
             {
+                // TODO: PHP actually modifies internal headers even on CLI
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(name))
+            {
+                // TODO: "Cookie names must not be empty"
+                PhpException.InvalidArgument(nameof(name), Resources.Resources.arg_empty);
                 return false;
             }
 
@@ -361,10 +384,59 @@ namespace Pchp.Library
 
         #region header, header_remove
 
+        ///// <summary>
+        ///// Regular expression matching "HTTP/1.0 (StatusCode)".
+        ///// </summary>
+        //readonly static Lazy<Regex> s_header_regex_statuscode = new Lazy<Regex>(
+        //    () => new Regex("[ ]*HTTP/[^ ]* ([0-9]{1,3}).*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled),
+        //    LazyThreadSafetyMode.None);
+
         /// <summary>
-        /// Regullar expression matching "HTTP/1.0 (StatusCode)".
+        /// Checks the given string for `<code>[ ]*HTTP/[^ ]* ([0-9]{1,3}).*</code>`.
         /// </summary>
-        readonly static Regex _header_regex_statuscode = new Regex("[ ]*HTTP/[^ ]* ([0-9]{1,3}).*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        /// <param name="header">Input string.</param>
+        /// <param name="code">If matches, gets the HTTP status code</param>
+        /// <returns></returns>
+        static bool TryMatchHttpStatusHeader(ReadOnlySpan<char> header, out int code)
+        {
+            code = default;
+
+            //var m = s_header_regex_statuscode.Value.Match(header);
+            //if (m.Success)
+            //{
+            //    code = int.Parse(m.Groups[1].Value);
+            //    return true;
+            //}
+
+            // HTTP/* 123.*
+            const string prefix = "HTTP/";
+            if (header.StartsWith(prefix.AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                header = header.Slice(prefix.Length);
+                var statusAt = header.IndexOf(' ');
+                if (statusAt >= 0)
+                {
+                    header = header.Slice(statusAt + 1);
+                    // naive int.TryParse(span, count);
+                    for (int i = 0; i < header.Length && i < 3; i++)
+                    {
+                        var c = header[i];
+                        var n = c - '0';
+                        if (n >= 0 && n <= 9)   // digit
+                        {
+                            code = (code * 10) + n;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            //
+            return code != 0;
+        }
 
         /// <summary>
 		/// Adds a specified header to the current response.
@@ -393,16 +465,18 @@ namespace Pchp.Library
             var webctx = ctx.HttpPhpContext;
             if (webctx == null || string.IsNullOrEmpty(str) || webctx.HeadersSent)
             {
+                PhpException.Throw(PhpError.Notice, Resources.Resources.headers_has_been_sent);
                 return;
             }
 
-            // response code is not forced => checks for initial HTTP/ and the status code in "str":  
+            // response code is not forced => checks for initial HTTP/ and the status code in "str":
+            var header = str.AsSpan().Trim();
+
             if (http_response_code <= 0)
             {
-                var m = _header_regex_statuscode.Match(str);
-                if (m.Success)
+                if (TryMatchHttpStatusHeader(header, out var status))
                 {
-                    webctx.StatusCode = int.Parse(m.Groups[1].Value);
+                    webctx.StatusCode = status;
                     return;
                 }
             }
@@ -415,19 +489,15 @@ namespace Pchp.Library
             // adds a header if it has a correct form (i.e. "name: value"):
             // store header in collection associated with current context - headers can be
             // replaced and are flushed automatically (in BeforeHeadersSent event :-)) on IIS Classic Mode.
-            int i = str.IndexOf(':');
+
+            int i = header.IndexOf(':');
             if (i > 0)
             {
-                string name = str.Substring(0, i).Trim();
-                if (!string.IsNullOrEmpty(name))
+                var name = header.Slice(0, i).TrimEnd();
+                if (name.Length != 0)
                 {
-                    webctx.SetHeader(name, str.Substring(i + 1).Trim());
-
-                    // specific cases:
-                    if (name.EqualsOrdinalIgnoreCase("location"))
-                    {
-                        webctx.StatusCode = (int)HttpStatusCode.Redirect; // 302
-                    }
+                    var value = header.Slice(i + 1).TrimStart().ToString();
+                    webctx.SetHeader(name.ToString(), value, append: !replace);
                 }
             }
         }

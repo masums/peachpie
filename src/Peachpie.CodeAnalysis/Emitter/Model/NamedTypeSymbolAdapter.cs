@@ -445,26 +445,18 @@ namespace Pchp.CodeAnalysis.Symbols
                 {
                     case TypeKind.Enum:
                     case TypeKind.Delegate:
-                    //C# interfaces don't have fields so the flag doesn't really matter, but Dev10 omits it
-                    case TypeKind.Interface:
                         return false;
                 }
 
-                // do not apply .beforefieldinit on classes,
-                // our synthesized static .cctor needs to be called
-                if (this is SourceTypeSymbol)
-                {
-                    return false;
-                }
-
-                //apply the beforefieldinit attribute unless there is an explicitly specified static constructor
-                foreach (var member in GetMembers(WellKnownMemberNames.StaticConstructorName))
-                {
-                    if (!member.IsImplicitlyDeclared)
-                    {
-                        return false;
-                    }
-                }
+                // PHP does not have exlicit static constructors:
+                ////apply the beforefieldinit attribute unless there is an explicitly specified static constructor
+                //foreach (var member in GetMembers(WellKnownMemberNames.StaticConstructorName))
+                //{
+                //    if (!member.IsImplicitlyDeclared)
+                //    {
+                //        return false;
+                //    }
+                //}
 
                 return true;
             }
@@ -561,13 +553,9 @@ namespace Pchp.CodeAnalysis.Symbols
                 yield return (Cci.IMethodDefinition)method;
             }
 
-            var generated = ((PEModuleBuilder)context.Module).GetSynthesizedMethods(this);
-            if (generated != null)
+            foreach (var m in ((PEModuleBuilder)context.Module).GetSynthesizedMethods(this))
             {
-                foreach (var m in generated)
-                {
-                    yield return m;
-                }
+                yield return m;
             }
         }
 
@@ -727,7 +715,18 @@ namespace Pchp.CodeAnalysis.Symbols
         {
             get
             {
-                string unsuffixedName = this.MetadataName;
+                string unsuffixedName = this.Name;
+
+                if (this is SourceTypeSymbol srct)
+                {
+                    // We're using SourceTypeSymbol.MetadataName as Name (because changing the Name would cause too much refactoring for now);
+                    // In PHP we can have more classes with the same name in the same namespace,
+                    // so the compiler (SourceTypeSymbol) generates different MetadataName for it.
+                    unsuffixedName = srct.MetadataName;
+
+                    // remove suffix from metadata, wil be added by emitter
+                    unsuffixedName = MetadataHelpers.InferTypeArityAndUnmangleMetadataName(unsuffixedName, out _);
+                }
 
                 // CLR generally allows names with dots, however some APIs like IMetaDataImport
                 // can only return full type names combined with namespaces. 

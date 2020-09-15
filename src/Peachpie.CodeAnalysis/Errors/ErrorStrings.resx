@@ -308,14 +308,15 @@
   <data name="WRN_CloneNonObject" xml:space="preserve">
     <value>Cloning of non-object: {0}.</value>
   </data>
-  <data name="INF_ClassNameWrongCase" xml:space="preserve">
-    <value>Wrong case in class name '{0}', expected '{1}'.</value>
+  <data name="INF_TypeNameCaseMismatch" xml:space="preserve">
+    <value>Name '{0}' does not match the expected name '{1}', letter casing mismatch.</value>
   </data>
   <data name="WRN_ForeachNonIterable" xml:space="preserve">
     <value>Using non-iterable type in foreach: {0}.</value>
   </data>
   <data name="WRN_FormatStringWrongArgCount" xml:space="preserve">
-    <value>Wrong number of arguments in {0}.</value>
+    <value>Call to '{0}()' expects {1} argument(s), {2} given.</value>
+    <comment>Call to printf or sprintf has wrong arguments count according to its format specifiers.</comment>
   </data>
   <data name="WRN_ParentCtorNotCalled" xml:space="preserve">
     <value>Missing the call of parent::__construct from {0}::__construct.</value>
@@ -337,5 +338,75 @@
   </data>
   <data name="INF_DestructDiscouraged" xml:space="preserve">
     <value>Use of '__destruct' is discouraged. Garbage collection behavior is a subject to change.</value>
+  </data>
+  <data name="ERR_DefaultParameterValueTypeMismatch" xml:space="preserve">
+    <value>Default value for parameter ${0} with a {1} type can only be {1} or NULL, {2} type given</value>
+  </data>
+  <data name="ERR_InvalidConstantExpression" xml:space="preserve">
+    <value>Constant expression contains invalid operations</value>
+    <comment>field or parameter initializer contains invalid expression</comment>
+  </data>
+  <data name="ERR_ThisOutOfObjectContext" xml:space="preserve">
+    <value>Using $this when not in object context</value>
+  </data>
+  <data name="FTL_BadCodepage" xml:space="preserve">
+    <value>Code page '{0}' is invalid or not installed</value>
+  </data>
+  <data name="ERR_ReadOnlyPropertyWritten" xml:space="preserve">
+    <value>Cannot set read-only property {0}::${1}</value>
+  </data>
+  <data name="ERR_CantReadResource" xml:space="preserve">
+    <value>Error reading resource '{0}' -- '{1}'</value>
+  </data>
+  <data name="ERR_VariadicParameterNotLast" xml:space="preserve">
+    <value>Only the last parameter can be variadic</value>
+  </data>
+  <data name="WRN_ArgumentVoid" xml:space="preserve">
+    <value>Argument has no value, parameter will be always NULL</value>
+  </data>
+  <data name="ERR_BadCompilationOptionValue" xml:space="preserve">
+    <value>Invalid '{0}' value: '{1}'.</value>
+  </data>
+  <data name="ERR_CompileCancelled" xml:space="preserve">
+    <value>Compilation cancelled by user</value>
+  </data>
+  <data name="INF_OverrideNameCaseMismatch" xml:space="preserve">
+    <value>Overriden function name '{0}' does not match it's parent name '{1}', letter casing mismatch.</value>
+  </data>
+  <data name="ERR_NoSourceFile" xml:space="preserve">
+    <value>Source file '{0}' could not be opened -- {1}</value>
+  </data>
+  <data name="WRN_PCRE_Pattern_Error" xml:space="preserve">
+    <value>PCRE pattern parse error: {0} at offset {1}</value>
+  </data>
+  <data name="ERR_PdbWritingFailed" xml:space="preserve">
+    <value>Failure writing debug information: {0}</value>
+  </data>
+  <data name="ERR_CantOpenFileWrite" xml:space="preserve">
+    <value>Cannot open '{0}' for writing -- '{1}'</value>
+  </data>
+  <data name="WRN_TypeNameInUse" xml:space="preserve">
+    <value>{0} '{1}' is already defined</value>
+  </data>
+  <data name="WRN_CannotIncludeFile" xml:space="preserve">
+    <value>Script file '{0}' could not be resolved, the script inclusion is unbound.</value>
+  </data>
+  <data name="WRN_CalledFromGlobalScope" xml:space="preserve">
+    <value>Called from the global scope</value>
+  </data>
+  <data name="ERR_CtorPropertyAbstractCtor" xml:space="preserve">
+    <value>Cannot declare promoted property in an abstract constructor</value>
+  </data>
+  <data name="ERR_CtorPropertyNotCtor" xml:space="preserve">
+    <value>Cannot declare promoted property outside a constructor</value>
+  </data>
+  <data name="ERR_CtorPropertyStaticCtor" xml:space="preserve">
+    <value>Cannot declare promoted property in a static constructor</value>
+  </data>
+  <data name="ERR_CtorPropertyVariadic" xml:space="preserve">
+    <value>Cannot declare variadic promoted property</value>
+  </data>
+  <data name="ERR_PropertyTypeNotAllowed" xml:space="preserve">
+    <value>Property {0}::${1} cannot have type {2}</value>
   </data>
 </root>

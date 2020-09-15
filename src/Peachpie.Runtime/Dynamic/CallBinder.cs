@@ -82,12 +82,16 @@ namespace Pchp.Core.Dynamic
         {
             var bound = CreateContext().ProcessArgs(target, args, HasTarget);
 
+
             Expression invocation;
 
             //
             var methods = ResolveMethods(bound);
             if (methods != null && methods.Length != 0)
             {
+                // late static bound type, 'static' if available, otherwise the target type
+                var lateStaticTypeArg = (object)bound.LateStaticType ?? bound.TargetType;
+
                 if (bound.HasArgumentUnpacking)
                 {
                     var args_var = Expression.Variable(typeof(PhpValue[]), "args_array");
@@ -98,13 +102,13 @@ namespace Pchp.Core.Dynamic
                      */
 
                     invocation = Expression.Block(new[] { args_var },
-                            Expression.Assign(args_var, BinderHelpers.UnpackArgumentsToArray(methods, bound.Arguments)),
-                            OverloadBinder.BindOverloadCall(_returnType, bound.TargetInstance, methods, bound.Context, args_var, bound.IsStaticSyntax, lateStaticType: bound.TargetType)
+                            Expression.Assign(args_var, BinderHelpers.UnpackArgumentsToArray(methods, bound.Arguments, bound.Context, bound.ClassContext)),
+                            OverloadBinder.BindOverloadCall(_returnType, bound.TargetInstance, methods, bound.Context, args_var, bound.IsStaticSyntax, lateStaticType: lateStaticTypeArg)
                         );
                 }
                 else
                 {
-                    invocation = OverloadBinder.BindOverloadCall(_returnType, bound.TargetInstance, methods, bound.Context, bound.Arguments, bound.IsStaticSyntax, lateStaticType: bound.TargetType);
+                    invocation = OverloadBinder.BindOverloadCall(_returnType, bound.TargetInstance, methods, bound.Context, bound.Arguments, bound.IsStaticSyntax, lateStaticType: lateStaticTypeArg, classContext: bound.ClassContext);
                 }
             }
             else
@@ -217,7 +221,7 @@ namespace Pchp.Core.Dynamic
             : base(returnType)
         {
             _name = name;
-            _classCtx = classContext.Equals(default(RuntimeTypeHandle)) ? null : Type.GetTypeFromHandle(classContext);
+            _classCtx = classContext.Equals(default) ? null : Type.GetTypeFromHandle(classContext);
         }
 
         protected override MethodBase[] ResolveMethods(CallSiteContext bound)
@@ -248,7 +252,7 @@ namespace Pchp.Core.Dynamic
             if (isobject == false)
             {
                 /* Template:
-                 * PhpException.MethodOnNonObject(name_expr); // aka PhpException.Throw(Error, method_called_on_non_object, name_expr)
+                 * PhpException.MethodOnNonObject(name_expr);
                  * return NULL;
                  */
                 var throwcall = Expression.Call(typeof(PhpException), "MethodOnNonObject", Array.Empty<Type>(), ConvertExpression.Bind(name_expr, typeof(string), bound.Context));
@@ -273,7 +277,7 @@ namespace Pchp.Core.Dynamic
                     call_args = new Expression[]
                     {
                         name_expr,
-                        BinderHelpers.NewPhpArray(bound.Arguments),
+                        BinderHelpers.NewPhpArray(bound.Arguments, bound.Context, bound.ClassContext),
                     };
                 }
 
@@ -358,7 +362,14 @@ namespace Pchp.Core.Dynamic
                 type = bound.CurrentTargetInstance.GetPhpTypeInfo();
             }
 
-            var call = BinderHelpers.FindMagicMethod(type, (bound.TargetInstance == null) ? TypeMethods.MagicMethods.__callstatic : TypeMethods.MagicMethods.__call);
+            // try to find __call() first if we have $this
+            var call = (bound.TargetInstance != null) ? BinderHelpers.FindMagicMethod(type, TypeMethods.MagicMethods.__call) : null;
+            if (call == null)
+            {
+                // look for __callStatic()
+                call = BinderHelpers.FindMagicMethod(type, TypeMethods.MagicMethods.__callstatic);
+            }
+
             if (call != null)
             {
                 Expression[] call_args;
@@ -378,11 +389,14 @@ namespace Pchp.Core.Dynamic
                     call_args = new Expression[]
                     {
                         name_expr,
-                        BinderHelpers.NewPhpArray(bound.Arguments),
+                        BinderHelpers.NewPhpArray(bound.Arguments, bound.Context, bound.ClassContext),
                     };
                 }
 
-                return OverloadBinder.BindOverloadCall(_returnType, bound.TargetInstance, call.Methods, bound.Context, call_args, true, lateStaticType: bound.TargetType);
+                return OverloadBinder.BindOverloadCall(_returnType, bound.TargetInstance, call.Methods, bound.Context, call_args,
+                    isStaticCallSyntax: true,
+                    lateStaticType: bound.TargetType,
+                    classContext: bound.ClassContext);
             }
 
             //

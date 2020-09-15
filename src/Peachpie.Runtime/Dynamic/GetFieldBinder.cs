@@ -45,8 +45,7 @@ namespace Pchp.Core.Dynamic
                     if (!_access.Quiet())
                     {
                         // PhpException.VariableMisusedAsObject(target, _access.ReadRef)
-                        var throwcall = Expression.Call(typeof(PhpException), "VariableMisusedAsObject", Array.Empty<Type>(),
-                            ConvertExpression.BindToValue(target.Expression), Expression.Constant(_access.EnsureAlias()));
+                        var throwcall = BinderHelpers.VariableMisusedAsObject(target.Expression, _access.EnsureAlias());
                         defaultexpr = Expression.Block(throwcall, defaultexpr);
                     }
 
@@ -70,8 +69,14 @@ namespace Pchp.Core.Dynamic
                 return new DynamicMetaObject(ConvertExpression.Bind(getter, _returnType, bound.Context), bound.Restrictions);
             }
 
-            // field not found
-            throw new NotImplementedException();
+            if (IsClassConst)
+            {
+                // error: constant not defined
+                // ...
+            }
+
+            // unreachable: property not found
+            throw new InvalidOperationException($"{bound.TargetType.Name}::{bound.Name} could not be resolved.");
         }
     }
 

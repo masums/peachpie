@@ -65,6 +65,13 @@ namespace Pchp.CodeAnalysis.Semantics
         public bool IsIsSet => (_flags & AccessMask.Isset) == AccessMask.Isset;
 
         /// <summary>
+        /// A flag denotating a value that is not aliased.
+        /// In case of read access, it denotates the source value.
+        /// In case of write access, it denotates the assignment target.
+        /// </summary>
+        public bool IsNotRef => _flags.IsNotRef();
+
+        /// <summary>
         /// Gets type of value to be written.
         /// </summary>
         public TypeRefMask WriteMask => _writeTypeMask;
@@ -108,7 +115,7 @@ namespace Pchp.CodeAnalysis.Semantics
         /// <summary>
         /// Gets value indicating the variable might be changed in context of the access.
         /// </summary>
-        public bool MightChange => IsWrite || IsUnset || IsEnsure;
+        public bool MightChange => IsWrite || IsUnset || IsEnsure || (IsQuiet && !IsIsSet);
 
         /// <summary>
         /// In case an alias will be written to the variable.
@@ -184,6 +191,18 @@ namespace Pchp.CodeAnalysis.Semantics
         public BoundAccess WithEnsureArray()
         {
             return new BoundAccess(_flags | AccessMask.EnsureArray, _targetType, _writeTypeMask);
+        }
+
+        /// <summary>
+        /// Creates <see cref="BoundAccess"/> value with specified <see cref="IsNotRef"/> flag.
+        /// </summary>
+        /// <param name="mightBeRef">Whether the value might be a reference (aliased) value.</param>
+        /// <returns>New access.</returns>
+        public BoundAccess WithRefFlag(bool mightBeRef)
+        {
+            var newflags = mightBeRef ? (_flags & ~AccessMask.IsNotRef) : (_flags | AccessMask.IsNotRef);
+
+            return new BoundAccess(newflags, _targetType, _writeTypeMask);
         }
 
         /// <summary>
@@ -461,6 +480,14 @@ namespace Pchp.CodeAnalysis.Semantics
         }
 
         public bool IsDirect => _nameExpression == null;
+
+        /// <summary>
+        /// Gets <see cref="NameValue"/> as string if the name is known.
+        /// Otherwise (when <see cref="NameExpression"/> is used instead), throws <see cref="InvalidOperationException"/> exception.
+        /// </summary>
+        public string ToStringOrThrow() => NameExpression == null ? NameValue.ToString() : throw new InvalidOperationException();
+
+        public override string ToString() => NameExpression != null ? $"{{{NameExpression}}}" : NameValue.ToString();
 
         public override OperationKind Kind => OperationKind.None;
 
@@ -751,20 +778,20 @@ namespace Pchp.CodeAnalysis.Semantics
         /// Gets value indicating the target is resolved at compile time,
         /// so it will be called statically.
         /// </summary>
-        public bool IsResolved => !Target.IsErrorMethodOrNull();
+        public bool IsResolved => !TargetMethod.IsErrorMethodOrNull();
 
         /// <summary>
         /// In case the inclusion target is resolved, gets reference to the <c>Main</c> method of the included script.
         /// </summary>
-        internal MethodSymbol Target
+        internal new MethodSymbol TargetMethod
         {
             get
             {
-                return TargetMethod;
+                return base.TargetMethod;
             }
             set
             {
-                TargetMethod = value;
+                base.TargetMethod = value;
             }
         }
 
@@ -856,6 +883,52 @@ namespace Pchp.CodeAnalysis.Semantics
         /// <param name="visitor">A reference to a <see cref="PhpOperationVisitor{TResult}"/> instance. Cannot be <c>null</c>.</param>
         /// <returns>The value returned by the <paramref name="visitor"/>.</returns>
         public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor) => visitor.VisitAssert(this);
+    }
+
+    #endregion
+
+    #region BoundThrowStatement
+
+    /// <summary>
+    /// throw <c>Thrown</c>;
+    /// </summary>
+    public sealed partial class BoundThrowExpression : BoundExpression, IThrowOperation
+    {
+        public override OperationKind Kind => OperationKind.Throw;
+
+        internal BoundExpression Thrown { get; set; }
+
+        IOperation IThrowOperation.Exception => this.Thrown;
+
+        public BoundThrowExpression(BoundExpression thrown)
+            : base()
+        {
+            Debug.Assert(thrown != null);
+            this.Thrown = thrown;
+        }
+
+        public BoundThrowExpression Update(BoundExpression thrown)
+        {
+            if (thrown == Thrown)
+            {
+                return this;
+            }
+            else
+            {
+                return new BoundThrowExpression(thrown);
+            }
+        }
+
+        public override void Accept(OperationVisitor visitor)
+            => visitor.VisitThrow(this);
+
+        public override TResult Accept<TArgument, TResult>(OperationVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitThrow(this, argument);
+
+        /// <summary>Invokes corresponding <c>Visit</c> method on given <paramref name="visitor"/>.</summary>
+        /// <param name="visitor">A reference to a <see cref="PhpOperationVisitor{TResult}"/> instance. Cannot be <c>null</c>.</param>
+        /// <returns>The value returned by the <paramref name="visitor"/>.</returns>
+        public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor) => visitor.VisitThrow(this);
     }
 
     #endregion
@@ -1457,6 +1530,8 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public BoundAssignEx Update(BoundReferenceExpression target, BoundExpression value)
         {
+            Debug.Assert(!(this is BoundCompoundAssignEx));
+
             if (target == Target && value == Value)
             {
                 return this;
@@ -1553,11 +1628,9 @@ namespace Pchp.CodeAnalysis.Semantics
     [DebuggerDisplay("{DebugView,nq}")]
     public partial class BoundVariableName : BoundOperation, IPhpOperation
     {
-        public VariableName NameValue => _nameValue;
-        readonly VariableName _nameValue;
+        public VariableName NameValue { get; }
 
-        public BoundExpression NameExpression => _nameExpression;
-        readonly BoundExpression _nameExpression;
+        public BoundExpression NameExpression { get; }
 
         public static bool operator ==(BoundVariableName lname, BoundVariableName rname)
         {
@@ -1574,17 +1647,17 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public override bool Equals(object obj) => obj is BoundVariableName bname && this == bname;
 
-        public override int GetHashCode() => _nameValue.GetHashCode() ^ (_nameExpression != null ? _nameExpression.GetHashCode() : 0);
+        public override int GetHashCode() => NameValue.GetHashCode() ^ (NameExpression != null ? NameExpression.GetHashCode() : 0);
 
         string DebugView
         {
             get
             {
-                return IsDirect ? _nameValue.ToString() : "{indirect}";
+                return IsDirect ? NameValue.ToString() : "{indirect}";
             }
         }
 
-        public bool IsDirect => _nameExpression == null;
+        public bool IsDirect => NameExpression == null;
 
         public override OperationKind Kind => OperationKind.None;
 
@@ -1608,13 +1681,13 @@ namespace Pchp.CodeAnalysis.Semantics
         private BoundVariableName(VariableName name, BoundExpression nameExpr)
         {
             Debug.Assert(name.IsEmpty() != (nameExpr == null));
-            _nameValue = name;
-            _nameExpression = nameExpr;
+            NameValue = name;
+            NameExpression = nameExpr;
         }
 
         public BoundVariableName Update(VariableName name, BoundExpression nameExpr)
         {
-            if (name.NameEquals(_nameValue) && nameExpr == _nameExpression)
+            if (name.NameEquals(NameValue) && nameExpr == NameExpression)
             {
                 return this;
             }
@@ -1652,6 +1725,8 @@ namespace Pchp.CodeAnalysis.Semantics
         internal IVariableReference Variable { get; set; }
 
         public override OperationKind Kind => OperationKind.LocalReference;
+
+        internal bool IsLowerTemp() => this is BoundTemporalVariableRef || (_name.IsDirect && _name.NameValue.Value.StartsWith("<match>'"));
 
         /// <summary>
         /// The type of variable before it gets accessed by this expression.
@@ -1715,7 +1790,15 @@ namespace Pchp.CodeAnalysis.Semantics
         /// <returns>The value returned by the <paramref name="visitor"/>.</returns>
         public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor) => visitor.VisitTemporalVariableRef(this);
 
-        public BoundTemporalVariableRef(string name) : base(new BoundVariableName(new VariableName(name))) { }
+        public BoundTemporalVariableRef(VariableName name)
+            : base(new BoundVariableName(name))
+        {
+        }
+
+        public BoundTemporalVariableRef(string name)
+            : this(new VariableName(name))
+        {
+        }
 
         public BoundTemporalVariableRef Update(string name)
         {
@@ -1941,9 +2024,9 @@ namespace Pchp.CodeAnalysis.Semantics
         public ImmutableArray<KeyValuePair<BoundExpression, BoundExpression>> Items { get => _items; internal set => _items = value; }
         ImmutableArray<KeyValuePair<BoundExpression, BoundExpression>> _items;
 
-        public BoundArrayEx(IEnumerable<KeyValuePair<BoundExpression, BoundExpression>> items)
+        public BoundArrayEx(ImmutableArray<KeyValuePair<BoundExpression, BoundExpression>> items)
         {
-            _items = items.ToImmutableArray();
+            _items = items;
         }
 
         public BoundArrayEx Update(ImmutableArray<KeyValuePair<BoundExpression, BoundExpression>> items)
@@ -2035,6 +2118,40 @@ namespace Pchp.CodeAnalysis.Semantics
         /// <returns>The value returned by the <paramref name="visitor"/>.</returns>
         public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor) => visitor.VisitArrayItem(this);
     }
+
+    #region BoundArrayItemOrdEx
+
+    public partial class BoundArrayItemOrdEx : BoundArrayItemEx
+    {
+        public BoundArrayItemOrdEx(PhpCompilation compilation, BoundExpression array, BoundExpression index) :
+            base(compilation, array, index)
+        { }
+
+        public new BoundArrayItemOrdEx Update(BoundExpression array, BoundExpression index)
+        {
+            if (array == Array && index == Index)
+            {
+                return this;
+            }
+            else
+            {
+                return new BoundArrayItemOrdEx(DeclaringCompilation, array, index).WithContext(this);
+            }
+        }
+
+        public override void Accept(OperationVisitor visitor)
+            => visitor.VisitArrayElementReference(this);
+
+        public override TResult Accept<TArgument, TResult>(OperationVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.VisitArrayElementReference(this, argument);
+
+        /// <summary>Invokes corresponding <c>Visit</c> method on given <paramref name="visitor"/>.</summary>
+        /// <param name="visitor">A reference to a <see cref="PhpOperationVisitor{TResult}"/> instance. Cannot be <c>null</c>.</param>
+        /// <returns>The value returned by the <paramref name="visitor"/>.</returns>
+        public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor) => visitor.VisitArrayItemOrd(this);
+    }
+
+    #endregion
 
     #endregion
 
@@ -2238,7 +2355,7 @@ namespace Pchp.CodeAnalysis.Semantics
 
     #endregion
 
-    #region BoundIsSetEx, BoundOffsetExists, BoundIsEmptyEx
+    #region BoundIsSetEx, BoundOffsetExists, BoundIsEmptyEx, BoundTryGetItem
 
     public partial class BoundIsEmptyEx : BoundExpression
     {
@@ -2358,6 +2475,52 @@ namespace Pchp.CodeAnalysis.Semantics
 
         public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor)
             => visitor.VisitOffsetExists(this);
+
+        public override void Accept(OperationVisitor visitor)
+            => visitor.DefaultVisit(this);
+
+        public override TResult Accept<TArgument, TResult>(OperationVisitor<TArgument, TResult> visitor, TArgument argument)
+            => visitor.DefaultVisit(this, argument);
+    }
+
+    /// <summary>
+    /// Shortcut for <c>isset($Array[$Index]) ? $Array[$Index] : Fallback</c>.
+    /// </summary>
+    public partial class BoundTryGetItem : BoundExpression
+    {
+        public override OperationKind Kind => OperationKind.None;
+
+        public BoundExpression Array { get; }
+        public BoundExpression Index { get; }
+        public BoundExpression Fallback { get; }
+
+        public override bool RequiresContext => Array.RequiresContext || Index.RequiresContext || Fallback.RequiresContext;
+
+        public BoundTryGetItem(BoundExpression array, BoundExpression index, BoundExpression fallback)
+        {
+            Debug.Assert(array != null);
+            Debug.Assert(index != null);
+            Debug.Assert(fallback != null);
+
+            Array = array;
+            Index = index;
+            Fallback = fallback;
+        }
+
+        public BoundTryGetItem Update(BoundExpression array, BoundExpression index, BoundExpression fallback)
+        {
+            if (Array == array && Index == index && Fallback == fallback)
+            {
+                return this;
+            }
+            else
+            {
+                return new BoundTryGetItem(array, index, fallback);
+            }
+        }
+
+        public override TResult Accept<TResult>(PhpOperationVisitor<TResult> visitor)
+            => visitor.VisitTryGetItem(this);
 
         public override void Accept(OperationVisitor visitor)
             => visitor.DefaultVisit(this);

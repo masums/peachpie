@@ -117,8 +117,14 @@
   <resheader name="writer">
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
+  <data name="data_missing" xml:space="preserve">
+    <value>Data missing</value>
+  </data>
   <data name="day_notfound" xml:space="preserve">
     <value>A textual day could not be found</value>
+  </data>
+  <data name="empty_string" xml:space="preserve">
+    <value>Empty string</value>
   </data>
   <data name="esc_char_expected" xml:space="preserve">
     <value>Escaped character expected</value>

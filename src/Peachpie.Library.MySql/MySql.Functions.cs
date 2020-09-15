@@ -1,4 +1,4 @@
-﻿using MySql.Data.MySqlClient;
+﻿using MySqlConnector;
 using Pchp.Core;
 using System;
 using System.Collections.Generic;
@@ -107,9 +107,9 @@ namespace Peachpie.Library.MySql
         static MySqlConnectionResource ValidConnection(Context ctx, PhpResource link)
         {
             var resource = link ?? LastConnection(ctx);
-            if (resource is MySqlConnectionResource)
+            if (resource is MySqlConnectionResource mysqllink)
             {
-                return (MySqlConnectionResource)resource;
+                return mysqllink;
             }
             else
             {
@@ -536,7 +536,7 @@ namespace Peachpie.Library.MySql
         /// Field names corresponds to the column names.
         /// </returns>
         [return: CastToFalse]
-        public static object mysql_fetch_object(PhpResource resultHandle)
+        public static stdClass mysql_fetch_object(PhpResource resultHandle)
         {
             var result = MySqlResultResource.ValidResult(resultHandle);
             if (result == null) return null;
@@ -887,7 +887,7 @@ namespace Peachpie.Library.MySql
         /// </summary>
         /// <param name="resultHandle">Query result resource.</param>
         /// <returns>The PHP object.</returns>
-        public static object mysql_fetch_field(PhpResource resultHandle)
+        public static stdClass mysql_fetch_field(PhpResource resultHandle)
         {
             var result = MySqlResultResource.ValidResult(resultHandle);
             if (result == null)

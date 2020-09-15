@@ -9,7 +9,7 @@ namespace Peachpie.Library.XmlDom
     /// <summary>
     /// DOM entity reference.
     /// </summary>
-    [PhpType(PhpTypeAttribute.InheritName)]
+    [PhpType(PhpTypeAttribute.InheritName), PhpExtension("dom")]
     public partial class DOMEntityReference : DOMNode
     {
         #region Fields and Properties
@@ -64,7 +64,7 @@ namespace Peachpie.Library.XmlDom
             this.XmlEntityReference = xmlEntityReference;
         }
 
-        protected override DOMNode CloneObjectInternal(bool deepCopyFields)
+        private protected override DOMNode CloneObjectInternal(bool deepCopyFields)
         {
             if (IsAssociated) return new DOMEntityReference(XmlEntityReference);
             else
@@ -84,7 +84,7 @@ namespace Peachpie.Library.XmlDom
 
         #region Hierarchy
 
-        internal override void Associate(XmlDocument/*!*/ document)
+        internal protected override void Associate(XmlDocument/*!*/ document)
         {
             if (!IsAssociated)
             {
